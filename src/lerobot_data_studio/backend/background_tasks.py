@@ -5,7 +5,6 @@ docs: https://fastapi.tiangolo.com/tutorial/background-tasks/
 
 import logging
 from typing import List
-from unittest.mock import patch
 
 import numpy as np
 import psutil
@@ -49,29 +48,17 @@ def load_dataset_task(repo_id: str, state_store: StateStore = None, local_path: 
 
         if local_path:
             # Load from local directory
-            # We need to mock several HuggingFace functions to avoid API calls
-            # since the dataset is local and not on the hub
+            # LeRobotDataset will check for local files first before trying to download
             logger.info(f"Loading local dataset from {local_path}")
 
-            # Mock multiple HuggingFace functions that might make API calls
-            with patch('lerobot.datasets.lerobot_dataset.get_safe_version') as mock_get_version, \
-                 patch('lerobot.datasets.lerobot_dataset.snapshot_download') as mock_snapshot, \
-                 patch('lerobot.datasets.utils.get_safe_version') as mock_utils_version:
-
-                # Return a dummy version for local datasets
-                mock_get_version.return_value = "v2.1"
-                mock_utils_version.return_value = "v2.1"
-
-                # Mock snapshot_download to do nothing (dataset is already local)
-                mock_snapshot.return_value = None
-
-                # Load the dataset from the local path
-                dataset = LeRobotDataset(repo_id=repo_id, root=local_path)
+            # Pass the local path as the root directory
+            # LeRobotDataset will load from local files if they exist
+            dataset = LeRobotDataset(repo_id=repo_id, root=local_path)
         else:
             # Load from HuggingFace Hub
             logger.info(f"Loading dataset from HuggingFace Hub: {repo_id}")
             dataset = LeRobotDataset(repo_id)
-        
+
         # Cache the dataset, including local_path if it was loaded locally
         state_store.cache_dataset(repo_id, dataset, local_path)
 
