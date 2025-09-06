@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Layout,
   Spin,
@@ -42,6 +42,8 @@ const DatasetViewer: React.FC = () => {
     episodeId?: string;
   }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const localPath = searchParams.get('local_path');
   const [currentEpisodeId, setCurrentEpisodeId] = useState(
     episodeId ? parseInt(episodeId) : 0
   );
@@ -75,18 +77,24 @@ const DatasetViewer: React.FC = () => {
 
   // Updated version to trigger auto-load
   const { data: status, isLoading: isStatusLoading } = useQuery({
-    queryKey: ['datasetStatus', namespace, name],
+    queryKey: ['datasetStatus', namespace, name, localPath],
     queryFn: async () => {
       // First check status without auto-load
       const initialStatus = await datasetApi.getDatasetStatus(
         namespace!,
         name!,
-        false
+        false,
+        localPath || undefined
       );
 
       // If not loaded, trigger auto-load
       if (initialStatus.status === 'not_loaded') {
-        return datasetApi.getDatasetStatus(namespace!, name!, true);
+        return datasetApi.getDatasetStatus(
+          namespace!,
+          name!,
+          true,
+          localPath || undefined
+        );
       }
 
       return initialStatus;
@@ -110,8 +118,14 @@ const DatasetViewer: React.FC = () => {
     isLoading: isEpisodeLoading,
     error,
   } = useQuery({
-    queryKey: ['episode', namespace, name, currentEpisodeId],
-    queryFn: () => datasetApi.getEpisode(namespace!, name!, currentEpisodeId),
+    queryKey: ['episode', namespace, name, currentEpisodeId, localPath],
+    queryFn: () =>
+      datasetApi.getEpisode(
+        namespace!,
+        name!,
+        currentEpisodeId,
+        localPath || undefined
+      ),
     enabled: !!namespace && !!name && status?.status === 'ready',
     retry: (failureCount, error: any) => {
       if (error?.response?.status === 202) {

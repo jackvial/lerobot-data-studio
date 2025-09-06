@@ -5,6 +5,7 @@ docs: https://fastapi.tiangolo.com/tutorial/background-tasks/
 
 import logging
 from typing import List
+from unittest.mock import patch
 
 import numpy as np
 import psutil
@@ -27,13 +28,14 @@ def get_process_memory_mb():
     return round(memory_info.rss / (1024 * 1024), 2)
 
 
-def load_dataset_task(repo_id: str, state_store: StateStore = None):
+def load_dataset_task(repo_id: str, state_store: StateStore = None, local_path: str = None):
     """
     Background task to load dataset
 
     Args:
         repo_id: The repository ID of the dataset to load
         state_store: StateStore instance for state management
+        local_path: Optional path to a local dataset directory
     """
 
     try:
@@ -42,11 +44,36 @@ def load_dataset_task(repo_id: str, state_store: StateStore = None):
 
         state_store.set_loading_status(
             repo_id,
-            DatasetLoadingStatus(progress=0.3, message=f"Downloading dataset {repo_id}..."),
+            DatasetLoadingStatus(progress=0.3, message=f"Loading dataset {repo_id}..."),
         )
 
-        dataset = LeRobotDataset(repo_id)
-        state_store.cache_dataset(repo_id, dataset)
+        if local_path:
+            # Load from local directory
+            # We need to mock several HuggingFace functions to avoid API calls
+            # since the dataset is local and not on the hub
+            logger.info(f"Loading local dataset from {local_path}")
+
+            # Mock multiple HuggingFace functions that might make API calls
+            with patch('lerobot.datasets.lerobot_dataset.get_safe_version') as mock_get_version, \
+                 patch('lerobot.datasets.lerobot_dataset.snapshot_download') as mock_snapshot, \
+                 patch('lerobot.datasets.utils.get_safe_version') as mock_utils_version:
+
+                # Return a dummy version for local datasets
+                mock_get_version.return_value = "v2.1"
+                mock_utils_version.return_value = "v2.1"
+
+                # Mock snapshot_download to do nothing (dataset is already local)
+                mock_snapshot.return_value = None
+
+                # Load the dataset from the local path
+                dataset = LeRobotDataset(repo_id=repo_id, root=local_path)
+        else:
+            # Load from HuggingFace Hub
+            logger.info(f"Loading dataset from HuggingFace Hub: {repo_id}")
+            dataset = LeRobotDataset(repo_id)
+        
+        # Cache the dataset, including local_path if it was loaded locally
+        state_store.cache_dataset(repo_id, dataset, local_path)
 
         memory_after = get_process_memory_mb()
         memory_used = np.around(memory_after - memory_before, 2).item()
@@ -63,14 +90,17 @@ def load_dataset_task(repo_id: str, state_store: StateStore = None):
         )
 
     except (FileNotFoundError, PermissionError) as e:
+        logger.error(f"File access error loading {repo_id}: {str(e)}")
         state_store.set_loading_status(
             repo_id, DatasetLoadingStatus(status="error", message=f"File access error: {str(e)}")
         )
     except (ValueError, KeyError) as e:
+        logger.error(f"Invalid dataset format for {repo_id}: {str(e)}")
         state_store.set_loading_status(
             repo_id, DatasetLoadingStatus(status="error", message=f"Invalid dataset format: {str(e)}")
         )
     except Exception as e:
+        logger.error(f"Failed to load dataset {repo_id}: {str(e)}", exc_info=True)
         state_store.set_loading_status(
             repo_id, DatasetLoadingStatus(status="error", message=f"Failed to load dataset: {str(e)}")
         )

@@ -23,6 +23,7 @@ class StateStore:
     loading_tasks: Dict[str, str] = field(default_factory=dict)
     creation_tasks: Dict[str, CreateTaskStatus] = field(default_factory=dict)
     merge_tasks: Dict[str, MergeTaskStatus] = field(default_factory=dict)
+    local_dataset_paths: Dict[str, str] = field(default_factory=dict)  # Track which datasets are local
 
     def _update_or_create(self, store: dict, key: str, value: object, defaults: object = None):
         """Generic method to update or create entries with spreading pattern for Pydantic models"""
@@ -69,8 +70,13 @@ class StateStore:
         if repo_id in self.loading_tasks:
             del self.loading_tasks[repo_id]
 
-    def cache_dataset(self, repo_id: str, dataset: LeRobotDataset):
+    def cache_dataset(self, repo_id: str, dataset: LeRobotDataset, local_path: str = None):
         self.dataset_cache[repo_id] = dataset
+        if local_path:
+            self.local_dataset_paths[repo_id] = local_path
+
+    def get_local_path(self, repo_id: str) -> Optional[str]:
+        return self.local_dataset_paths.get(repo_id)
 
     def get_creation_task(self, task_id: str) -> Optional[CreateTaskStatus]:
         return self.creation_tasks.get(task_id)

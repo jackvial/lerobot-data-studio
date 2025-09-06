@@ -1,6 +1,7 @@
 import logging
 import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import requests
 import uvicorn
@@ -77,6 +78,7 @@ async def get_dataset_status(
     background_tasks: BackgroundTasks,
     state_store: StateStore = Depends(get_state_store),
     auto_load: bool = Query(False, description="Automatically start loading if not loaded"),
+    local_path: str = Query(None, description="Local path to dataset directory"),
 ):
     """Get dataset loading status."""
     repo_id = f"{dataset_namespace}/{dataset_name}"
@@ -94,7 +96,7 @@ async def get_dataset_status(
                 state_store.set_loading_status(
                     repo_id, DatasetLoadingStatus(status="loading", message="Starting to load dataset...")
                 )
-                background_tasks.add_task(load_dataset_task, repo_id, state_store)
+                background_tasks.add_task(load_dataset_task, repo_id, state_store, local_path)
                 return state_store.get_loading_status(repo_id)
 
             logger.info(f"Dataset {repo_id} is already being loaded")
@@ -112,6 +114,7 @@ async def get_episode(
     episode_id: int,
     background_tasks: BackgroundTasks,
     state_store: StateStore = Depends(get_state_store),
+    local_path: str = Query(None, description="Local path to dataset directory"),
 ):
     """Get episode data for a specific dataset and episode."""
     repo_id = f"{dataset_namespace}/{dataset_name}"
@@ -127,7 +130,7 @@ async def get_episode(
                 repo_id,
                 DatasetLoadingStatus(status="loading", message="Starting to load dataset..."),
             )
-            background_tasks.add_task(load_dataset_task, repo_id, state_store)
+            background_tasks.add_task(load_dataset_task, repo_id, state_store, local_path)
 
         raise HTTPException(
             status_code=http_status.HTTP_202_ACCEPTED, detail="Dataset is being loaded. Please check status."
@@ -142,15 +145,22 @@ async def get_episode(
 
     episode_data_items, feature_names = get_episode_data(dataset, episode_id)
 
+    # Check if this is a local dataset
+    is_local = state_store.get_local_path(repo_id) is not None
+
     dataset_info = DatasetInfo(
         repo_id=repo_id,
         num_samples=dataset.num_frames,
         num_episodes=dataset.num_episodes,
         fps=dataset.fps,
         version=str(getattr(dataset.meta, "version", getattr(dataset.meta, "_version", None))),
+        is_local=is_local,
     )
 
     video_paths = [dataset.meta.get_video_file_path(episode_id, key) for key in dataset.meta.video_keys]
+
+    # For local datasets, we don't need to pass local_path in the URL
+    # because the dataset.root is already set correctly when loaded
     videos_info = [
         VideoInfo(url=f"/api/videos/{repo_id}/{str(video_path)}", filename=video_path.parent.name)
         for video_path in video_paths
@@ -263,6 +273,7 @@ async def load_dataset(
     dataset_name: str,
     background_tasks: BackgroundTasks,
     state_store: StateStore = Depends(get_state_store),
+    local_path: str = Query(None, description="Local path to dataset directory"),
 ):
     """Trigger dataset loading."""
     repo_id = f"{dataset_namespace}/{dataset_name}"
@@ -280,7 +291,7 @@ async def load_dataset(
     state_store.set_loading_status(
         repo_id, DatasetLoadingStatus(status="loading", message="Starting to load dataset...")
     )
-    background_tasks.add_task(load_dataset_task, repo_id, state_store)
+    background_tasks.add_task(load_dataset_task, repo_id, state_store, local_path)
 
     return {"status": "loading_started", "message": "Dataset loading has been started"}
 
@@ -306,9 +317,32 @@ async def list_user_datasets(username: str):
 @app.get(
     "/api/datasets/validate/{dataset_namespace}/{dataset_name}", response_model=DatasetValidationResponse
 )
-async def validate_dataset(dataset_namespace: str, dataset_name: str):
-    """Check if a dataset exists on HuggingFace Hub."""
+async def validate_dataset(
+    dataset_namespace: str,
+    dataset_name: str,
+    local_path: str = Query(None, description="Local path to dataset directory"),
+):
+    """Check if a dataset exists on HuggingFace Hub or locally."""
     repo_id = f"{dataset_namespace}/{dataset_name}"
+
+    # Check if local path is provided and valid
+    if local_path:
+        dataset_path = Path(local_path)
+        if dataset_path.exists() and dataset_path.is_dir():
+            # Check for expected dataset structure
+            meta_dir = dataset_path / "meta"
+            if meta_dir.exists() and meta_dir.is_dir():
+                return DatasetValidationResponse(exists=True, message="Local dataset found")
+            else:
+                return DatasetValidationResponse(
+                    exists=False, message="Directory exists but doesn't appear to be a valid LeRobot dataset (missing meta/ directory)"
+                )
+        else:
+            return DatasetValidationResponse(
+                exists=False, message=f"Local path '{local_path}' does not exist or is not a directory"
+            )
+
+    # Otherwise check HuggingFace Hub
     api = HfApi()
 
     try:
@@ -339,6 +373,8 @@ async def merge_datasets(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
+    # Note: For now, merge only supports HuggingFace Hub datasets
+    # Local dataset merging would require passing paths for each dataset
     api = HfApi()
     for dataset_id in request.dataset_ids:
         try:
@@ -404,6 +440,57 @@ async def get_current_user():
     except Exception as e:
         logger.warning(f"Could not get user info: {e}")
         return {"username": None, "error": "Not logged in to HuggingFace Hub"}
+
+
+@app.get("/api/datasets/local/validate")
+async def validate_local_dataset_path(
+    path: str = Query(..., description="Local path to dataset directory"),
+):
+    """Validate a local dataset path and derive the repo_id from it."""
+    dataset_path = Path(path)
+
+    # Check if path exists and is a directory
+    if not dataset_path.exists():
+        return {
+            "valid": False,
+            "message": f"Path does not exist: {path}",
+        }
+
+    if not dataset_path.is_dir():
+        return {
+            "valid": False,
+            "message": f"Path is not a directory: {path}",
+        }
+
+    # Check for expected dataset structure
+    meta_dir = dataset_path / "meta"
+    if not meta_dir.exists() or not meta_dir.is_dir():
+        return {
+            "valid": False,
+            "message": "Directory doesn't appear to be a valid LeRobot dataset (missing meta/ directory)",
+        }
+
+    # Derive repo_id from path
+    # Take the last two parts of the path as namespace/dataset_name
+    path_parts = dataset_path.parts
+    if len(path_parts) >= 2:
+        dataset_name = path_parts[-1]
+        namespace = path_parts[-2]
+
+        # Basic validation of namespace and dataset_name
+        if namespace and dataset_name and "." not in namespace and "." not in dataset_name:
+            repo_id = f"{namespace}/{dataset_name}"
+            return {
+                "valid": True,
+                "repo_id": repo_id,
+                "path": str(dataset_path),
+                "message": f"Valid dataset found: {repo_id}",
+            }
+
+    return {
+        "valid": False,
+        "message": "Could not derive valid repo_id from path. Path should end with namespace/dataset_name",
+    }
 
 
 if __name__ == "__main__":

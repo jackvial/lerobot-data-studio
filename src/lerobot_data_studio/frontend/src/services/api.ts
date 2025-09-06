@@ -37,12 +37,13 @@ export const datasetApi = {
   getDatasetStatus: async (
     namespace: string,
     name: string,
-    autoLoad: boolean = false
+    autoLoad: boolean = false,
+    localPath?: string
   ): Promise<DatasetLoadingStatus> => {
     const response = await api.get<DatasetLoadingStatus>(
       `/datasets/${namespace}/${name}/status`,
       {
-        params: { auto_load: autoLoad },
+        params: { auto_load: autoLoad, local_path: localPath },
       }
     );
     return response.data;
@@ -52,10 +53,14 @@ export const datasetApi = {
   getEpisode: async (
     namespace: string,
     name: string,
-    episodeId: number
+    episodeId: number,
+    localPath?: string
   ): Promise<EpisodeData> => {
     const response = await api.get<EpisodeData>(
-      `/datasets/${namespace}/${name}/episodes/${episodeId}`
+      `/datasets/${namespace}/${name}/episodes/${episodeId}`,
+      {
+        params: localPath ? { local_path: localPath } : {},
+      }
     );
     return response.data;
   },
@@ -103,10 +108,14 @@ export const datasetApi = {
   // Validate if a dataset exists
   validateDataset: async (
     namespace: string,
-    name: string
+    name: string,
+    localPath?: string
   ): Promise<{ exists: boolean; message?: string }> => {
     const response = await api.get<{ exists: boolean; message?: string }>(
-      `/datasets/validate/${namespace}/${name}`
+      `/datasets/validate/${namespace}/${name}`,
+      {
+        params: localPath ? { local_path: localPath } : {},
+      }
     );
     return response.data;
   },
@@ -159,18 +168,39 @@ export const datasetApi = {
     return response.data;
   },
 
+  // Validate local dataset path and derive repo_id
+  validateLocalDatasetPath: async (
+    path: string
+  ): Promise<{
+    valid: boolean;
+    repo_id?: string;
+    path?: string;
+    message: string;
+  }> => {
+    const response = await api.get('/datasets/local/validate', {
+      params: { path },
+    });
+    return response.data;
+  },
+
   // Poll dataset status until ready
   waitForDataset: async (
     namespace: string,
     name: string,
-    onProgress?: (status: DatasetLoadingStatus) => void
+    onProgress?: (status: DatasetLoadingStatus) => void,
+    localPath?: string
   ): Promise<void> => {
     const pollInterval = 1000; // 1 second
     const maxRetries = 300; // 5 minutes max
     let retries = 0;
 
     while (retries < maxRetries) {
-      const status = await datasetApi.getDatasetStatus(namespace, name, false);
+      const status = await datasetApi.getDatasetStatus(
+        namespace,
+        name,
+        false,
+        localPath
+      );
 
       if (onProgress) {
         onProgress(status);

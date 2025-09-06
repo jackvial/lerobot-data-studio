@@ -9,6 +9,7 @@ class DatasetInfo(BaseModel):
     num_episodes: int
     fps: int
     version: Optional[str] = None
+    is_local: bool = False  # Track if dataset was loaded from local path
 
 
 class VideoInfo(BaseModel):
