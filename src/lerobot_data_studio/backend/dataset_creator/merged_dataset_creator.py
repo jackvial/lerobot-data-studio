@@ -5,9 +5,9 @@ from typing import List
 
 from datasets import concatenate_datasets
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.utils import get_episode_data_index
 
 from .dataset_creator import DatasetCreator
+from .utils import get_episode_data_index
 
 logger = logging.getLogger(__name__)
 

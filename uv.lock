@@ -226,15 +226,6 @@ wheels = [
 ]
 
 [[package]]
-name = "blinker"
-version = "1.9.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/21/28/9b3f50ce0e048515135495f198351908d99540d69bfdc8c1d15b73dc55ce/blinker-1.9.0.tar.gz", hash = "sha256:b4ce2265a7abece45e7cc896e98dbebe6cead56bcf805a3d23136d145f5445bf", size = 22460, upload-time = "2024-11-08T17:25:47.436Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/10/cb/f2ad4230dc2eb1a74edf38f1a38b9b52277f75bef262d8908e60d957e13c/blinker-1.9.0-py3-none-any.whl", hash = "sha256:ba0efaa9080b619ff2f3459d1d500c57bddea4a6b424b60a91141db6fd2f08bc", size = 8458, upload-time = "2024-11-08T17:25:46.184Z" },
-]
-
-[[package]]
 name = "certifi"
 version = "2025.8.3"
 source = { registry = "https://pypi.org/simple" }
@@ -591,23 +582,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/40/bb/0ab3e58d22305b6f5440629d20683af28959bf793d98d11950e305c1c326/filelock-3.19.1.tar.gz", hash = "sha256:66eda1888b0171c998b35be2bcc0f6d75c388a7ce20c3f3f37aa8e96c2dddf58", size = 17687, upload-time = "2025-08-14T16:56:03.016Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/42/14/42b2651a2f46b022ccd948bca9f2d5af0fd8929c4eec235b8d6d844fbe67/filelock-3.19.1-py3-none-any.whl", hash = "sha256:d38e30481def20772f5baf097c122c3babc4fcdb7e14e57049eb9d88c6dc017d", size = 15988, upload-time = "2025-08-14T16:56:01.633Z" },
-]
-
-[[package]]
-name = "flask"
-version = "3.1.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "blinker" },
-    { name = "click" },
-    { name = "itsdangerous" },
-    { name = "jinja2" },
-    { name = "markupsafe" },
-    { name = "werkzeug" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/c0/de/e47735752347f4128bcf354e0da07ef311a78244eba9e3dc1d4a5ab21a98/flask-3.1.1.tar.gz", hash = "sha256:284c7b8f2f58cb737f0cf1c30fd7eaf0ccfcde196099d24ecede3fc2005aa59e", size = 753440, upload-time = "2025-05-13T15:01:17.447Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/3d/68/9d4508e893976286d2ead7f8f571314af6c2037af34853a30fd769c02e9d/flask-3.1.1-py3-none-any.whl", hash = "sha256:07aae2bb5eaf77993ef57e357491839f5fd9f4dc281593a81a9e4d79a24f295c", size = 103305, upload-time = "2025-05-13T15:01:15.591Z" },
 ]
 
 [[package]]
@@ -987,15 +961,6 @@ wheels = [
 ]
 
 [[package]]
-name = "itsdangerous"
-version = "2.2.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/9c/cb/8ac0172223afbccb63986cc25049b154ecfb5e85932587206f42317be31d/itsdangerous-2.2.0.tar.gz", hash = "sha256:e0050c0b7da1eea53ffaf149c0cfbb5c6e2e2b69c4bef22c81fa6eb73e5f6173", size = 54410, upload-time = "2024-04-16T21:28:15.614Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/04/96/92447566d16df59b2a776c0fb82dbc4d9e07cd95062562af01e408583fc4/itsdangerous-2.2.0-py3-none-any.whl", hash = "sha256:c6242fc49e35958c8b15141343aa660db5fc54d4f13a1db01a3f5891b98700ef", size = 16234, upload-time = "2024-04-16T21:28:14.499Z" },
-]
-
-[[package]]
 name = "jinja2"
 version = "3.1.6"
 source = { registry = "https://pypi.org/simple" }
@@ -1021,8 +986,8 @@ wheels = [
 
 [[package]]
 name = "lerobot"
-version = "0.3.3"
-source = { registry = "https://pypi.org/simple" }
+version = "0.3.4"
+source = { directory = "../lerobot" }
 dependencies = [
     { name = "av" },
     { name = "cmake" },
@@ -1031,7 +996,6 @@ dependencies = [
     { name = "diffusers" },
     { name = "draccus" },
     { name = "einops" },
-    { name = "flask" },
     { name = "gymnasium" },
     { name = "huggingface-hub", extra = ["cli", "hf-transfer"] },
     { name = "imageio", extra = ["ffmpeg"] },
@@ -1047,10 +1011,91 @@ dependencies = [
     { name = "torchvision" },
     { name = "wandb" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c7/01/45eb19324a80c8719e7bd98fc12c5dfb50da2b58c2404953f6d0112a6fc3/lerobot-0.3.3.tar.gz", hash = "sha256:5a8c526f4f50a5a4260b75f0382af26d01ef169c9a1ae8ca453ad5c6e1cf5aef", size = 450703, upload-time = "2025-08-06T18:41:35.689Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/8e/be/3361a6417799062bbf7b7f6863900e3c1843eb7b21a5ffc5831fdfc7a3b3/lerobot-0.3.3-py3-none-any.whl", hash = "sha256:ae8354b516f5c8cfaa059d5ac926b4d03e96ca73350b971f8c7d75b905ba953d", size = 597692, upload-time = "2025-08-06T18:41:33.608Z" },
+
+[package.metadata]
+requires-dist = [
+    { name = "accelerate", marker = "extra == 'smolvla'", specifier = ">=1.7.0" },
+    { name = "av", specifier = ">=14.2.0" },
+    { name = "cmake", specifier = ">=3.29.0.1" },
+    { name = "datasets", specifier = ">=2.19.0,<=3.6.0" },
+    { name = "debugpy", marker = "extra == 'dev'", specifier = ">=1.8.1" },
+    { name = "deepdiff", specifier = ">=7.0.1,<9.0.0" },
+    { name = "diffusers", specifier = ">=0.27.2" },
+    { name = "draccus", specifier = "==0.10.0" },
+    { name = "dynamixel-sdk", marker = "extra == 'dynamixel'", specifier = ">=3.7.31" },
+    { name = "einops", specifier = ">=0.8.0" },
+    { name = "feetech-servo-sdk", marker = "extra == 'feetech'", specifier = ">=1.0.0" },
+    { name = "grpcio", marker = "extra == 'grpcio-dep'", specifier = "==1.73.1" },
+    { name = "grpcio-tools", marker = "extra == 'dev'", specifier = "==1.73.1" },
+    { name = "gym-aloha", marker = "extra == 'aloha'", specifier = ">=0.1.1" },
+    { name = "gym-hil", marker = "extra == 'hilserl'", specifier = ">=0.1.9" },
+    { name = "gym-pusht", marker = "extra == 'pusht'", specifier = ">=0.1.5" },
+    { name = "gym-xarm", marker = "extra == 'xarm'", specifier = ">=0.1.1" },
+    { name = "gymnasium", specifier = ">=0.29.1,<1.0.0" },
+    { name = "hidapi", marker = "extra == 'gamepad'", specifier = ">=0.14.0" },
+    { name = "huggingface-hub", extras = ["hf-transfer", "cli"], specifier = ">=0.34.2" },
+    { name = "imageio", extras = ["ffmpeg"], specifier = ">=2.34.0,<3.0.0" },
+    { name = "jsonlines", specifier = ">=4.0.0" },
+    { name = "lerobot", extras = ["aloha"], marker = "extra == 'all'" },
+    { name = "lerobot", extras = ["async"], marker = "extra == 'all'" },
+    { name = "lerobot", extras = ["dev"], marker = "extra == 'all'" },
+    { name = "lerobot", extras = ["dynamixel"], marker = "extra == 'all'" },
+    { name = "lerobot", extras = ["feetech"], marker = "extra == 'hopejr'" },
+    { name = "lerobot", extras = ["feetech"], marker = "extra == 'lekiwi'" },
+    { name = "lerobot", extras = ["gamepad"], marker = "extra == 'all'" },
+    { name = "lerobot", extras = ["grpcio-dep"], marker = "extra == 'async'" },
+    { name = "lerobot", extras = ["grpcio-dep"], marker = "extra == 'dev'" },
+    { name = "lerobot", extras = ["grpcio-dep"], marker = "extra == 'hilserl'" },
+    { name = "lerobot", extras = ["hilserl"], marker = "extra == 'all'" },
+    { name = "lerobot", extras = ["hopejr"], marker = "extra == 'all'" },
+    { name = "lerobot", extras = ["intelrealsense"], marker = "extra == 'all'" },
+    { name = "lerobot", extras = ["kinematics"], marker = "extra == 'all'" },
+    { name = "lerobot", extras = ["lekiwi"], marker = "extra == 'all'" },
+    { name = "lerobot", extras = ["pi0"], marker = "extra == 'all'" },
+    { name = "lerobot", extras = ["placo-dep"], marker = "extra == 'hilserl'" },
+    { name = "lerobot", extras = ["placo-dep"], marker = "extra == 'kinematics'" },
+    { name = "lerobot", extras = ["pusht"], marker = "extra == 'all'" },
+    { name = "lerobot", extras = ["pygame-dep"], marker = "extra == 'gamepad'" },
+    { name = "lerobot", extras = ["pygame-dep"], marker = "extra == 'hopejr'" },
+    { name = "lerobot", extras = ["reachy2"], marker = "extra == 'all'" },
+    { name = "lerobot", extras = ["smolvla"], marker = "extra == 'all'" },
+    { name = "lerobot", extras = ["test"], marker = "extra == 'all'" },
+    { name = "lerobot", extras = ["transformers-dep"], marker = "extra == 'hilserl'" },
+    { name = "lerobot", extras = ["transformers-dep"], marker = "extra == 'pi0'" },
+    { name = "lerobot", extras = ["transformers-dep"], marker = "extra == 'smolvla'" },
+    { name = "lerobot", extras = ["video-benchmark"], marker = "extra == 'all'" },
+    { name = "lerobot", extras = ["xarm"], marker = "extra == 'all'" },
+    { name = "matplotlib", marker = "extra == 'async'", specifier = ">=3.10.3" },
+    { name = "mock-serial", marker = "sys_platform != 'win32' and extra == 'test'", specifier = ">=0.0.1" },
+    { name = "num2words", marker = "extra == 'smolvla'", specifier = ">=0.5.14" },
+    { name = "opencv-python-headless", specifier = ">=4.9.0" },
+    { name = "packaging", specifier = ">=24.2" },
+    { name = "pandas", marker = "extra == 'video-benchmark'", specifier = ">=2.2.2" },
+    { name = "placo", marker = "extra == 'placo-dep'", specifier = ">=0.9.6" },
+    { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.7.0" },
+    { name = "protobuf", marker = "extra == 'grpcio-dep'", specifier = "==6.31.0" },
+    { name = "pygame", marker = "extra == 'pygame-dep'", specifier = ">=2.5.1" },
+    { name = "pymunk", marker = "extra == 'pusht'", specifier = ">=6.6.0,<7.0.0" },
+    { name = "pynput", specifier = ">=1.7.7" },
+    { name = "pyrealsense2", marker = "sys_platform != 'darwin' and extra == 'intelrealsense'", specifier = ">=2.55.1.6486" },
+    { name = "pyrealsense2-macosx", marker = "sys_platform == 'darwin' and extra == 'intelrealsense'", specifier = ">=2.54" },
+    { name = "pyserial", specifier = ">=3.5" },
+    { name = "pytest", marker = "extra == 'test'", specifier = ">=8.1.0" },
+    { name = "pytest-cov", marker = "extra == 'test'", specifier = ">=5.0.0" },
+    { name = "pytest-timeout", marker = "extra == 'test'", specifier = ">=2.4.0" },
+    { name = "pyzmq", marker = "extra == 'lekiwi'", specifier = ">=26.2.1" },
+    { name = "reachy2-sdk", marker = "extra == 'reachy2'", specifier = ">=1.0.14" },
+    { name = "rerun-sdk", specifier = ">=0.21.0,<0.23.0" },
+    { name = "safetensors", marker = "extra == 'smolvla'", specifier = ">=0.4.3" },
+    { name = "scikit-image", marker = "extra == 'video-benchmark'", specifier = ">=0.23.2" },
+    { name = "termcolor", specifier = ">=2.4.0,<4.0.0" },
+    { name = "torch", specifier = ">=2.2.1,<2.8.0" },
+    { name = "torchcodec", marker = "(platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l' and sys_platform == 'linux') or (platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')", specifier = ">=0.2.1,<0.6.0" },
+    { name = "torchvision", specifier = ">=0.21.0,<0.23.0" },
+    { name = "transformers", marker = "extra == 'transformers-dep'", specifier = ">=4.50.3,<4.52.0" },
+    { name = "wandb", specifier = ">=0.20.0" },
 ]
+provides-extras = ["pygame-dep", "placo-dep", "transformers-dep", "grpcio-dep", "feetech", "dynamixel", "gamepad", "hopejr", "lekiwi", "reachy2", "kinematics", "intelrealsense", "pi0", "smolvla", "hilserl", "async", "dev", "test", "video-benchmark", "aloha", "pusht", "xarm", "all"]
 
 [[package]]
 name = "lerobot-data-studio"
@@ -1094,7 +1139,7 @@ requires-dist = [
     { name = "huggingface-hub", specifier = ">=0.27.1" },
     { name = "imageio", extras = ["ffmpeg"], specifier = ">=2.34.0" },
     { name = "jsonlines", specifier = ">=4.0.0" },
-    { name = "lerobot", specifier = ">=0.3.3" },
+    { name = "lerobot", directory = "../lerobot" },
     { name = "numpy", specifier = ">=1.26.2" },
     { name = "opencv-python", specifier = ">=4.9.0" },
     { name = "pandas", specifier = ">=2.1.3" },
@@ -3302,18 +3347,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/2b/fb/c492d6daa5ec067c2988ac80c61359ace5c4c674c532985ac5a123436cec/websockets-15.0.1-pp310-pypy310_pp73-manylinux_2_5_x86_64.manylinux1_x86_64.manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:b359ed09954d7c18bbc1680f380c7301f92c60bf924171629c5db97febb12f04", size = 174155, upload-time = "2025-03-05T20:03:25.321Z" },
     { url = "https://files.pythonhosted.org/packages/68/a1/dcb68430b1d00b698ae7a7e0194433bce4f07ded185f0ee5fb21e2a2e91e/websockets-15.0.1-pp310-pypy310_pp73-win_amd64.whl", hash = "sha256:cad21560da69f4ce7658ca2cb83138fb4cf695a2ba3e475e0559e05991aa8122", size = 176884, upload-time = "2025-03-05T20:03:27.934Z" },
     { url = "https://files.pythonhosted.org/packages/fa/a8/5b41e0da817d64113292ab1f8247140aac61cbf6cfd085d6a0fa77f4984f/websockets-15.0.1-py3-none-any.whl", hash = "sha256:f7a866fbc1e97b5c617ee4116daaa09b722101d4a3c170c787450ba409f9736f", size = 169743, upload-time = "2025-03-05T20:03:39.41Z" },
-]
-
-[[package]]
-name = "werkzeug"
-version = "3.1.3"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "markupsafe" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/9f/69/83029f1f6300c5fb2471d621ab06f6ec6b3324685a2ce0f9777fd4a8b71e/werkzeug-3.1.3.tar.gz", hash = "sha256:60723ce945c19328679790e3282cc758aa4a6040e4bb330f53d30fa546d44746", size = 806925, upload-time = "2024-11-08T15:52:18.093Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/52/24/ab44c871b0f07f491e5d2ad12c9bd7358e527510618cb1b803a88e986db1/werkzeug-3.1.3-py3-none-any.whl", hash = "sha256:54b78bf3716d19a65be4fceccc0d1d7b89e608834989dfae50ea87564639213e", size = 224498, upload-time = "2024-11-08T15:52:16.132Z" },
 ]
 
 [[package]]

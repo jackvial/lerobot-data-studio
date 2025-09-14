@@ -6,7 +6,8 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.utils import append_jsonlines, write_episode_stats, write_info
+
+from .utils import append_jsonlines, write_episode_stats, write_info
 
 logger = logging.getLogger(__name__)
 

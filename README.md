@@ -2,9 +2,10 @@
 
 A web-based GUI for editing and merging LeRobot datasets.
 
-*Note: This is an unofficial tool and is not affiliated with Huggingface, LeRobot or the LeRobot team.*
+_Note: This is an unofficial tool and is not affiliated with Huggingface, LeRobot or the LeRobot team._
 
 ## Main Features
+
 - Merge multiple datasets into a single dataset
 - Easily remove episodes and create new clean datasets
 - Speed control and keyboard shortcuts to streamline dataset cleaning
@@ -16,6 +17,7 @@ A web-based GUI for editing and merging LeRobot datasets.
 ## Quick Start
 
 ### Step 1: Prerequisites
+
 - [UV Python package and project manager](https://astral.sh/uv/): `curl -LsSf https://astral.sh/uv/install.sh | sh`
 - Python 3.10+ (You can use uv to install and manage python versions e.g. `uv python install 3.12`)
 - Node.js 24+ (Install using nvm - see instructions below)
@@ -73,6 +75,7 @@ Use the provided script to start both frontend and backend servers:
 ```
 
 ## Dataset Creation
+
 Dataset creation for merged and filtered (AKA edited) datasets is always none destructive and will always create a new dataset and upload it to the Huggingface Hub.
 
 ### Merged Dataset Creation
@@ -80,7 +83,14 @@ Dataset creation for merged and filtered (AKA edited) datasets is always none de
 Merges multiple datasets into a single new dataset and uploads it to the Huggingface Hub.
 
 ### Filtered Dataset Creation
+
 Editing/filtering a dataset creates a new dataset that only excludes the episodes that were selected in the UI.
+
+## Roadmap
+
+### Support Datasets V3
+
+- [ ] Test the conversion script using dataset `python lerobot/datasets/v30/convert_dataset_v21_to_v30.py --repo-id=jackvial/screwdriver_attach_panel_ls_080125_14_e8`
 
 ## Development
 

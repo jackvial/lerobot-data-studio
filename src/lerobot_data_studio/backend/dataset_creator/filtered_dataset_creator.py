@@ -5,11 +5,10 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.utils import get_episode_data_index
 
 from ..state_store import HF_LEROBOT_HOME
 from .dataset_creator import DatasetCreator as BaseDatasetCreator
-from .utils import update_progress
+from .utils import get_episode_data_index, update_progress
 
 logger = logging.getLogger(__name__)
 
