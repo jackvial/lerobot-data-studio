@@ -111,40 +111,11 @@ export const datasetApi = {
     return response.data;
   },
 
-  // Merge multiple datasets
-  mergeDatasets: async (request: {
-    dataset_ids: string[];
-    new_repo_id: string;
-    tolerance_s?: number;
-  }): Promise<{
-    success: boolean;
-    new_repo_id: string;
-    message: string;
-    task_id?: string;
-  }> => {
-    const response = await api.post('/datasets/merge', request);
-    return response.data;
-  },
-
   // Get dataset creation task status
   getCreateStatus: async (taskId: string): Promise<CreateTaskStatus> => {
     const response = await api.get<CreateTaskStatus>(
       `/datasets/create/status/${taskId}`
     );
-    return response.data;
-  },
-
-  // Get merge task status
-  getMergeStatus: async (
-    taskId: string
-  ): Promise<{
-    task_id: string;
-    status: string;
-    progress?: number;
-    message?: string;
-    new_repo_id?: string;
-  }> => {
-    const response = await api.get(`/datasets/merge/status/${taskId}`);
     return response.data;
   },
 

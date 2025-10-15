@@ -1,4 +1,5 @@
 import logging
+import re
 import uuid
 from contextlib import asynccontextmanager
 
@@ -10,11 +11,9 @@ from fastapi.responses import FileResponse
 from huggingface_hub import HfApi
 from lerobot import available_datasets
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.push_dataset_to_hub.utils import check_repo_id
 from lerobot.utils.utils import init_logging
 
-from .background_tasks import create_dataset_task, load_dataset_task, merge_datasets_task
-from .dataset_creator import get_episode_data
+from .background_tasks import create_dataset_task, load_dataset_task
 from .models import (
     CreateDatasetRequest,
     CreateDatasetResponse,
@@ -25,14 +24,48 @@ from .models import (
     DatasetSearchResponse,
     DatasetValidationResponse,
     EpisodeData,
-    MergeDatasetRequest,
-    MergeTaskStatus,
     VideoInfo,
 )
 from .state_store import StateStore, get_state_store
+from .utils import get_episode_data
 
 init_logging()
 logger = logging.getLogger(__name__)
+
+
+def check_repo_id(repo_id: str) -> None:
+    """
+    Validate that a repo_id follows the HuggingFace format: namespace/name.
+
+    Args:
+        repo_id: The repository ID to validate.
+
+    Raises:
+        ValueError: If the repo_id format is invalid.
+    """
+    if not repo_id or not isinstance(repo_id, str):
+        raise ValueError("repo_id must be a non-empty string")
+
+    parts = repo_id.split("/")
+    if len(parts) != 2:
+        raise ValueError(f"Invalid repo_id format: '{repo_id}'. Expected format: 'namespace/name'")
+
+    namespace, name = parts
+    if not namespace or not name:
+        raise ValueError(f"Invalid repo_id format: '{repo_id}'. Both namespace and name must be non-empty")
+
+    # Validate characters (HuggingFace allows alphanumeric, hyphens, underscores, and dots)
+    pattern = r"^[a-zA-Z0-9._-]+$"
+    if not re.match(pattern, namespace):
+        raise ValueError(
+            f"Invalid namespace in repo_id: '{namespace}'. "
+            "Only alphanumeric characters, dots, hyphens, and underscores are allowed"
+        )
+    if not re.match(pattern, name):
+        raise ValueError(
+            f"Invalid name in repo_id: '{name}'. "
+            "Only alphanumeric characters, dots, hyphens, and underscores are allowed"
+        )
 
 
 @asynccontextmanager
@@ -325,60 +358,6 @@ async def validate_dataset(dataset_namespace: str, dataset_name: str):
     except Exception as e:
         logger.error(f"Unexpected error validating dataset {repo_id}: {str(e)}", exc_info=True)
         return DatasetValidationResponse(exists=False, message=f"Error validating dataset '{repo_id}'")
-
-
-@app.post("/api/datasets/merge", response_model=CreateDatasetResponse)
-async def merge_datasets(
-    request: MergeDatasetRequest,
-    background_tasks: BackgroundTasks,
-    state_store: StateStore = Depends(get_state_store),
-):
-    """Merge multiple datasets into a new dataset."""
-    try:
-        check_repo_id(request.new_repo_id)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-
-    api = HfApi()
-    for dataset_id in request.dataset_ids:
-        try:
-            api.dataset_info(dataset_id)
-        except Exception as exc:
-            raise HTTPException(
-                status_code=400, detail=f"Dataset '{dataset_id}' not found on HuggingFace Hub"
-            ) from exc
-
-    task_id = str(uuid.uuid4())
-
-    state_store.set_merge_task(
-        task_id,
-        MergeTaskStatus(task_id=task_id, message="Merge task created, starting soon..."),
-    )
-
-    background_tasks.add_task(
-        merge_datasets_task,
-        task_id,
-        request.dataset_ids,
-        request.new_repo_id,
-        request.tolerance_s,
-        state_store,
-    )
-
-    return CreateDatasetResponse(
-        success=True,
-        new_repo_id=request.new_repo_id,
-        message=f"Merge task started for {len(request.dataset_ids)} datasets",
-        task_id=task_id,
-    )
-
-
-@app.get("/api/datasets/merge/status/{task_id}", response_model=MergeTaskStatus)
-async def get_merge_status(task_id: str, state_store: StateStore = Depends(get_state_store)):
-    """Get the status of a merge task."""
-    merge_task = state_store.get_merge_task(task_id)
-    if not merge_task:
-        raise HTTPException(status_code=404, detail="Task not found")
-    return merge_task
 
 
 @app.get("/api/datasets/create/status/{task_id}", response_model=CreateTaskStatus)

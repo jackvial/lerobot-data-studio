@@ -6,8 +6,6 @@ import {
   Space,
   Typography,
   Input,
-  Select,
-  Tooltip,
 } from 'antd';
 import { CheckCircleOutlined, CloseCircleOutlined } from '@ant-design/icons';
 
@@ -22,10 +20,6 @@ interface EpisodeSidebarProps {
   onSelectAll: () => void;
   onClearSelection: () => void;
   onEpisodeClick: (episodeId: number) => void;
-  availableTasks: string[];
-  getEpisodeTask: (episodeId: number) => string | undefined;
-  setEpisodeTask: (episodeId: number, task: string | undefined) => void;
-  defaultTask?: string;
 }
 
 const EpisodeSidebar: React.FC<EpisodeSidebarProps> = ({
@@ -36,32 +30,12 @@ const EpisodeSidebar: React.FC<EpisodeSidebarProps> = ({
   onSelectAll,
   onClearSelection,
   onEpisodeClick,
-  availableTasks,
-  getEpisodeTask,
-  setEpisodeTask,
-  defaultTask,
 }) => {
   const [searchTerm, setSearchTerm] = React.useState('');
 
   const filteredEpisodes = episodes.filter((ep) =>
     ep.toString().includes(searchTerm)
   );
-
-  React.useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      const key = event.key;
-      if (['1', '2', '3', '4', '5'].includes(key)) {
-        const taskIndex = parseInt(key) - 1;
-        if (taskIndex < availableTasks.length) {
-          const selectedTask = availableTasks[taskIndex];
-          setEpisodeTask(currentEpisodeId, selectedTask);
-        }
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [availableTasks, currentEpisodeId, setEpisodeTask]);
 
   return (
     <div
@@ -118,8 +92,6 @@ const EpisodeSidebar: React.FC<EpisodeSidebarProps> = ({
         <List
           dataSource={filteredEpisodes}
           renderItem={(episodeId) => {
-            const episodeTask = getEpisodeTask(episodeId);
-            const effectiveTask = episodeTask || defaultTask;
             const isCurrentEpisode = episodeId === currentEpisodeId;
 
             return (
@@ -177,46 +149,6 @@ const EpisodeSidebar: React.FC<EpisodeSidebarProps> = ({
                   >
                     Episode {episodeId}
                   </Text>
-                  {availableTasks.length > 0 && (
-                    <Tooltip
-                      title={
-                        episodeTask
-                          ? `Custom task: ${episodeTask}`
-                          : defaultTask
-                          ? `Using default: ${defaultTask}`
-                          : 'Select a task'
-                      }
-                      placement='right'
-                    >
-                      <Select
-                        size='small'
-                        value={episodeTask}
-                        onChange={(value) => setEpisodeTask(episodeId, value)}
-                        allowClear
-                        placeholder={defaultTask ? defaultTask : 'Select task'}
-                        style={{
-                          width: '140px',
-                          fontSize: '12px',
-                          marginLeft: 'auto',
-                        }}
-                        options={availableTasks.map((task) => ({
-                          label: task,
-                          value: task,
-                        }))}
-                        onClick={(e) => e.stopPropagation()}
-                        dropdownStyle={{ fontSize: '12px' }}
-                        suffixIcon={
-                          effectiveTask && !episodeTask ? (
-                            <span
-                              style={{ fontSize: '10px', color: '#8c8c8c' }}
-                            >
-                              ↓
-                            </span>
-                          ) : undefined
-                        }
-                      />
-                    </Tooltip>
-                  )}
                 </div>
               </List.Item>
             );

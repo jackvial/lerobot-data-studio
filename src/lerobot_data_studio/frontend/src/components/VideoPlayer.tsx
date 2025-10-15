@@ -1,7 +1,6 @@
 import React, { useRef, useEffect, useState } from 'react';
 import {
   Card,
-  Tag,
   Row,
   Col,
   Button,
@@ -21,14 +20,12 @@ interface VideoInfo {
 interface VideoPlayerProps {
   videos: VideoInfo[];
   episodeId: number;
-  tasks?: string[];
   onTimeUpdate?: (time: number) => void;
 }
 
 const VideoPlayer: React.FC<VideoPlayerProps> = ({
   videos,
   episodeId,
-  tasks,
   onTimeUpdate,
 }) => {
   const videoRefs = useRef<(HTMLVideoElement | null)[]>([]);
@@ -201,9 +198,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
           }}
         >
           <span>Episode {episodeId} Videos</span>
-          {tasks && tasks.length > 0 && (
-            <Tag color='blue'>{tasks.join(', ')}</Tag>
-          )}
         </div>
       }
       extra={

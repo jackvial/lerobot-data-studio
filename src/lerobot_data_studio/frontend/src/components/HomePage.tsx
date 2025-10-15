@@ -1,10 +1,9 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Card, Input, Typography, Space, Row, Col, Spin, Button } from 'antd';
+import { Card, Input, Typography, Space, Spin, Button } from 'antd';
 import {
   ArrowRightOutlined,
   RobotOutlined,
-  PlusOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
 } from '@ant-design/icons';
@@ -125,7 +124,7 @@ const HomePage: React.FC = () => {
           <RobotOutlined style={{ fontSize: '48px', marginBottom: '16px' }} />
           <Title level={1}>LeRobot Data Studio</Title>
           <Title level={4}>The Unofficial LeRobot Dataset Editor</Title>
-          <Title level={2}>Edit and Merge LeRobot Datasets</Title>
+          <Title level={2}>Edit LeRobot Datasets</Title>
         </div>
 
         <div>
@@ -170,50 +169,6 @@ const HomePage: React.FC = () => {
               )}
             </Space>
           </Card>
-        </div>
-
-        <div>
-          <Title level={2}>Merge Datasets</Title>
-          <Text
-            type='secondary'
-            style={{ fontSize: '16px', display: 'block', marginBottom: '16px' }}
-          >
-            Merge multiple datasets into a new dataset
-          </Text>
-          <Card style={{ textAlign: 'center', padding: '40px' }}>
-            <Button
-              type='primary'
-              size='large'
-              icon={<PlusOutlined />}
-              onClick={() => navigate('/merge')}
-            >
-              Merge Datasets
-            </Button>
-          </Card>
-        </div>
-
-        <div>
-          <Title level={3}>Featured Datasets</Title>
-          <Row gutter={[16, 16]}>
-            {datasets?.featured_datasets.map((dataset: string) => (
-              <Col key={dataset} xs={24} sm={12} md={8}>
-                <Card
-                  hoverable
-                  onClick={() => handleDatasetSelect(dataset)}
-                  style={{ height: '100%' }}
-                >
-                  <Card.Meta
-                    title={dataset.split('/')[1]}
-                    description={
-                      <Space direction='vertical' size='small'>
-                        <Text type='secondary'>{dataset}</Text>
-                      </Space>
-                    }
-                  />
-                </Card>
-              </Col>
-            ))}
-          </Row>
         </div>
 
         {isLoading && (

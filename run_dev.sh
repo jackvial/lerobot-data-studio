@@ -3,6 +3,9 @@
 # Exit on error
 set -e
 
+# Skip Git LFS downloads (we don't need test artifacts)
+export GIT_LFS_SKIP_SMUDGE=1
+
 # Colors for output
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'

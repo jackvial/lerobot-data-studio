@@ -1,17 +1,14 @@
 # LeRobot Data Studio - Unofficial LeRobot Dataset Editor
 
-A web-based GUI for editing and merging LeRobot datasets.
+A web-based GUI for editing LeRobot datasets build on the LeRobot [dataset tools api](https://huggingface.co/docs/lerobot/using_dataset_tools)
 
 *Note: This is an unofficial tool and is not affiliated with Huggingface, LeRobot or the LeRobot team.*
 
 ## Main Features
-- Merge multiple datasets into a single dataset
 - Easily remove episodes and create new clean datasets
 - Speed control and keyboard shortcuts to streamline dataset cleaning
 
 ![Dataset Editor](media/dataset_editor.png)
-
-![Merged Dataset Created](media/merged_dataset_created.png)
 
 ## Quick Start
 
@@ -73,14 +70,13 @@ Use the provided script to start both frontend and backend servers:
 ```
 
 ## Dataset Creation
-Dataset creation for merged and filtered (AKA edited) datasets is always none destructive and will always create a new dataset and upload it to the Huggingface Hub.
-
-### Merged Dataset Creation
-
-Merges multiple datasets into a single new dataset and uploads it to the Huggingface Hub.
+Dataset creation for filtered (AKA edited) datasets is always none destructive and will always create a new dataset and upload it to the Huggingface Hub.
 
 ### Filtered Dataset Creation
 Editing/filtering a dataset creates a new dataset that only excludes the episodes that were selected in the UI.
+
+### Merging Datasets
+If you need to merge multiple datasets we recommend using the [LeRobot datasets tool CLI](https://huggingface.co/docs/lerobot/using_dataset_tools#lerobot.datasets.merge_datasets)
 
 ## Development
 

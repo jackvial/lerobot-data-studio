@@ -8,7 +8,7 @@ from typing import Dict, Optional
 from huggingface_hub.constants import HF_HOME
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
-from .models import CreateTaskStatus, DatasetLoadingStatus, MergeTaskStatus
+from .models import CreateTaskStatus, DatasetLoadingStatus
 
 default_cache_path = Path(HF_HOME) / "lerobot"
 HF_LEROBOT_HOME = Path(os.getenv("HF_LEROBOT_HOME", default_cache_path)).expanduser()
@@ -22,7 +22,6 @@ class StateStore:
     dataset_loading_status: Dict[str, DatasetLoadingStatus] = field(default_factory=dict)
     loading_tasks: Dict[str, str] = field(default_factory=dict)
     creation_tasks: Dict[str, CreateTaskStatus] = field(default_factory=dict)
-    merge_tasks: Dict[str, MergeTaskStatus] = field(default_factory=dict)
 
     def _update_or_create(self, store: dict, key: str, value: object, defaults: object = None):
         """Generic method to update or create entries with spreading pattern for Pydantic models"""
@@ -81,17 +80,6 @@ class StateStore:
             task_id,
             status,
             CreateTaskStatus(task_id=task_id, status="pending", progress=0.0),
-        )
-
-    def get_merge_task(self, task_id: str) -> Optional[MergeTaskStatus]:
-        return self.merge_tasks.get(task_id)
-
-    def set_merge_task(self, task_id: str, status: MergeTaskStatus):
-        self._update_or_create(
-            self.merge_tasks,
-            task_id,
-            status,
-            MergeTaskStatus(task_id=task_id, status="pending", progress=0.0),
         )
 
     def clear_loading_tasks(self):
