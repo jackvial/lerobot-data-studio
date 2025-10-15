@@ -35,6 +35,8 @@ jobs:
         uv venv
         source .venv/bin/activate
         uv sync
+      env:
+        GIT_LFS_SKIP_SMUDGE: 1
     
     - name: Install frontend dependencies
       run: |
