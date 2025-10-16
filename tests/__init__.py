@@ -1,1 +1,0 @@
-# Tests package for lerobot_data_studio 

@@ -21,13 +21,11 @@ import { useQuery, useMutation } from '@tanstack/react-query';
 import { datasetApi } from '@/services/api';
 import { useSelectedEpisodes } from '@/hooks/useSelectedEpisodes';
 import { useVideoPreloader } from '@/hooks/useVideoPreloader';
-import { useTaskManagement } from '@/hooks/useTaskManagement';
 import VideoPlayer from './VideoPlayer';
 import DataChart from './DataChart';
 import LoadingIndicator from './LoadingIndicator';
 import EpisodeSidebar from './EpisodeSidebar';
 import EpisodeIndexDisplay from './EpisodeIndexDisplay';
-import TaskManagement from './TaskManagement';
 import EpisodeNavigation from './EpisodeNavigation';
 import DatasetCompletionModal from './DatasetCompletionModal';
 import { createDatasetRequest } from '@/utils/createDataset';
@@ -62,16 +60,6 @@ const DatasetViewer: React.FC = () => {
     selectAll,
     selectedCount,
   } = useSelectedEpisodes(datasetId);
-
-  // Task management
-  const {
-    availableTasks,
-    addTask,
-    removeTask,
-    setEpisodeTask,
-    getEpisodeTask,
-    getDefaultTask,
-  } = useTaskManagement(datasetId);
 
   // Updated version to trigger auto-load
   const { data: status, isLoading: isStatusLoading } = useQuery({
@@ -218,10 +206,6 @@ const DatasetViewer: React.FC = () => {
     setCurrentEpisodeId(newEpisodeId);
   };
 
-  // Task management handlers
-  const currentEpisodeTask = getEpisodeTask(currentEpisodeId);
-  const defaultTask = getDefaultTask();
-
   // Update URL when episode changes
   useEffect(() => {
     if (namespace && name && currentEpisodeId !== parseInt(episodeId || '0')) {
@@ -288,7 +272,6 @@ const DatasetViewer: React.FC = () => {
       datasetId,
       newRepoId: values.new_repo_id,
       selectedEpisodes,
-      getEpisodeTask,
     });
 
     await createDatasetMutation.mutateAsync(payload);
@@ -433,10 +416,6 @@ const DatasetViewer: React.FC = () => {
               onSelectAll={() => selectAll(episodesList.episodes)}
               onClearSelection={clearSelection}
               onEpisodeClick={handleEpisodeChange}
-              availableTasks={availableTasks}
-              getEpisodeTask={getEpisodeTask}
-              setEpisodeTask={setEpisodeTask}
-              defaultTask={defaultTask}
             />
           )}
         </Sider>
@@ -458,12 +437,6 @@ const DatasetViewer: React.FC = () => {
             </div>
           ) : episodeData ? (
             <Space direction='vertical' size='large' style={{ width: '100%' }}>
-              <TaskManagement
-                availableTasks={availableTasks}
-                onAddTask={addTask}
-                onRemoveTask={removeTask}
-              />
-
               <EpisodeNavigation
                 currentEpisodeId={currentEpisodeId}
                 totalEpisodes={episodeData.dataset_info.num_episodes}
@@ -474,11 +447,6 @@ const DatasetViewer: React.FC = () => {
               <VideoPlayer
                 videos={episodeData.videos_info}
                 episodeId={currentEpisodeId}
-                tasks={
-                  currentEpisodeTask
-                    ? [...(episodeData.tasks || []), currentEpisodeTask]
-                    : episodeData.tasks || []
-                }
                 onTimeUpdate={setCurrentVideoTime}
               />
 

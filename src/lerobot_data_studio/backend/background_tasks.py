@@ -4,18 +4,15 @@ docs: https://fastapi.tiangolo.com/tutorial/background-tasks/
 """
 
 import logging
-from typing import List
+from typing import Dict, List
 
 import numpy as np
 import psutil
+from lerobot.datasets.dataset_tools import delete_episodes
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
-from .dataset_creator.filtered_dataset_creator import FilteredDatasetCreator
-from .dataset_creator.merged_dataset_creator import MergedDatasetCreator
-from .models import CreateTaskStatus, DatasetLoadingStatus, MergeTaskStatus
-from .state_store import (
-    StateStore,
-)
+from .models import CreateTaskStatus, DatasetLoadingStatus
+from .state_store import StateStore
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +80,7 @@ def create_dataset_task(
     original_repo_id: str,
     new_repo_id: str,
     selected_episodes: List[int],
-    episode_index_task_map: dict,
+    episode_index_task_map: Dict[int, str],
     state_store: StateStore = None,
 ):
     """Background task to create filtered dataset.
@@ -113,65 +110,73 @@ def create_dataset_task(
         if not dataset:
             raise ValueError(f"Dataset {original_repo_id} not found in cache")
 
-        FilteredDatasetCreator(dataset).create(
-            new_repo_id, selected_episodes, episode_index_task_map, task_id
-        )
-
         state_store.set_creation_task(
             task_id,
             CreateTaskStatus(
-                status="completed",
-                progress=1.0,
-                message=f"Successfully created dataset '{new_repo_id}'",
-            ),
-        )
-
-    except Exception as e:
-        state_store.set_creation_task(
-            task_id,
-            CreateTaskStatus(
-                status="failed",
-                message=f"Error creating dataset: {str(e)}",
-            ),
-        )
-
-
-def merge_datasets_task(
-    task_id: str, dataset_ids: List[str], new_repo_id: str, tolerance_s: float, state_store: StateStore = None
-):
-    """Background task to merge datasets.
-
-    Args:
-        task_id: Unique task identifier
-        dataset_ids: List of dataset IDs to merge
-        new_repo_id: Target dataset repository ID
-        tolerance_s: Tolerance in seconds for merging
-        state_store: StateStore instance for state management
-    """
-    try:
-        state_store.set_merge_task(
-            task_id,
-            MergeTaskStatus(
                 task_id=task_id,
                 status="running",
-                progress=0.1,
-                message=f"Starting to merge {len(dataset_ids)} datasets...",
-            ),
-        )
-
-        MergedDatasetCreator().create(dataset_ids, new_repo_id, tolerance_s)
-
-        state_store.set_merge_task(
-            task_id,
-            MergeTaskStatus(
-                status="completed",
-                progress=1.0,
-                message=f"Successfully merged {len(dataset_ids)} datasets",
+                progress=0.3,
+                message="Filtering episodes...",
                 new_repo_id=new_repo_id,
             ),
         )
-    except Exception as e:
-        state_store.set_merge_task(
+
+        # Create filtered dataset by deleting unselected episodes
+        all_episodes = list(range(dataset.meta.total_episodes))
+        episodes_to_delete = [ep for ep in all_episodes if ep not in selected_episodes]
+
+        if episodes_to_delete:
+            filtered_dataset = delete_episodes(
+                dataset, episode_indices=episodes_to_delete, repo_id=new_repo_id
+            )
+        else:
+            # If no episodes to delete, we're keeping all episodes
+            # In this case, we need to copy the dataset with a new repo_id
+            # For now, we'll just use the original dataset
+            filtered_dataset = dataset
+            filtered_dataset.repo_id = new_repo_id
+
+        state_store.set_creation_task(
             task_id,
-            MergeTaskStatus(status="failed", message=f"Error during merge: {str(e)}"),
+            CreateTaskStatus(
+                task_id=task_id,
+                status="running",
+                progress=0.7,
+                message="Pushing dataset to hub...",
+                new_repo_id=new_repo_id,
+            ),
+        )
+
+        # TODO: Handle episode_index_task_map for custom task assignments
+        # This might require using the add_feature API or updating metadata after creation
+        if episode_index_task_map:
+            logger.warning("Custom task assignment is not yet implemented with the new API")
+
+        # Push to hub
+        filtered_dataset.push_to_hub(
+            license="apache-2.0",
+            tags=["LeRobot", "robotics"],
+        )
+
+        state_store.set_creation_task(
+            task_id,
+            CreateTaskStatus(
+                task_id=task_id,
+                status="completed",
+                progress=1.0,
+                message=f"Successfully created dataset '{new_repo_id}'",
+                new_repo_id=new_repo_id,
+            ),
+        )
+
+    except Exception as e:
+        logger.error(f"Error creating dataset: {str(e)}", exc_info=True)
+        state_store.set_creation_task(
+            task_id,
+            CreateTaskStatus(
+                task_id=task_id,
+                status="failed",
+                message=f"Error creating dataset: {str(e)}",
+                new_repo_id=new_repo_id,
+            ),
         )

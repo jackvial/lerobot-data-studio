@@ -71,20 +71,6 @@ class DatasetValidationResponse(BaseModel):
     message: Optional[str] = None
 
 
-class MergeDatasetRequest(BaseModel):
-    dataset_ids: List[str] = Field(..., min_length=2)
-    new_repo_id: str
-    tolerance_s: float = Field(default=1e-4)
-
-
-class MergeTaskStatus(BaseModel):
-    task_id: Optional[str] = None
-    status: Optional[str] = None
-    progress: Optional[float] = None
-    message: Optional[str] = None
-    new_repo_id: Optional[str] = None
-
-
 class CreateTaskStatus(BaseModel):
     task_id: Optional[str] = None
     status: Optional[str] = None
