@@ -57,7 +57,7 @@ uv sync
 After completing the python installation, install frontend dependencies:
 
 ```bash
-cd packages/lerobot-data-studio/frontend
+cd src/lerobot-data-studio/frontend
 npm install
 ```
 
