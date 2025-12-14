@@ -185,7 +185,10 @@ async def get_episode(
 
     video_paths = [dataset.meta.get_video_file_path(episode_id, key) for key in dataset.meta.video_keys]
     videos_info = [
-        VideoInfo(url=f"/api/videos/{repo_id}/{str(video_path)}", filename=video_path.parent.name)
+        VideoInfo(
+            url=f"/api/videos/{repo_id}/{str(video_path)}",
+            filename=f"{video_path.parent.parent.name} ({video_path.parent.name})",
+        )
         for video_path in video_paths
     ]
     tasks = dataset.meta.episodes[episode_id]["tasks"]
