@@ -1,11 +1,21 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Card, Input, Typography, Space, Spin, Button } from 'antd';
+import {
+  Card,
+  Input,
+  Typography,
+  Space,
+  Spin,
+  Button,
+  Select,
+  message,
+} from 'antd';
 import {
   ArrowRightOutlined,
   RobotOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
+  FolderOpenOutlined,
 } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
 import { datasetApi } from '@/services/api';
@@ -24,6 +34,35 @@ const HomePage: React.FC = () => {
     queryKey: ['datasets'],
     queryFn: datasetApi.listDatasets,
   });
+
+  const { data: featuredLocal } = useQuery({
+    queryKey: ['featuredLocalDatasets'],
+    queryFn: datasetApi.listFeaturedLocalDatasets,
+  });
+
+  const [localPath, setLocalPath] = useState('');
+  const [isLoadingLocal, setIsLoadingLocal] = useState(false);
+
+  const handleLoadLocalDataset = async (pathOverride?: string) => {
+    const target = (pathOverride ?? localPath).trim();
+    if (!target) {
+      message.error('Please provide a local dataset folder path');
+      return;
+    }
+    setIsLoadingLocal(true);
+    try {
+      const result = await datasetApi.registerLocalDataset(target);
+      const [namespace, name] = result.repo_id.split('/');
+      navigate(`/${namespace}/${name}`);
+    } catch (error: unknown) {
+      const detail =
+        (error as { response?: { data?: { detail?: string } } })?.response?.data
+          ?.detail ?? 'Failed to load local dataset';
+      message.error(detail);
+    } finally {
+      setIsLoadingLocal(false);
+    }
+  };
 
   const handleDatasetSelect = (repoId: string) => {
     const [namespace, name] = repoId.split('/');
@@ -167,6 +206,73 @@ const HomePage: React.FC = () => {
                   {validationMessage}
                 </Text>
               )}
+            </Space>
+          </Card>
+        </div>
+
+        <div>
+          <Title level={2}>Load Local Dataset</Title>
+          <Text
+            type='secondary'
+            style={{ fontSize: '16px', display: 'block', marginBottom: '16px' }}
+          >
+            Load a LeRobot v3.0 dataset directly from a folder on disk
+          </Text>
+          <Card>
+            <Space direction='vertical' style={{ width: '100%' }} size='middle'>
+              {featuredLocal && featuredLocal.datasets.length > 0 && (
+                <div>
+                  <Text
+                    type='secondary'
+                    style={{ display: 'block', marginBottom: '4px' }}
+                  >
+                    Featured local datasets
+                  </Text>
+                  <Select
+                    style={{ width: '100%' }}
+                    size='large'
+                    placeholder='Select a featured local dataset...'
+                    options={featuredLocal.datasets.map((d) => ({
+                      value: d.path,
+                      label: d.label || d.path,
+                    }))}
+                    onChange={(value: string) => {
+                      setLocalPath(value);
+                      void handleLoadLocalDataset(value);
+                    }}
+                    allowClear
+                  />
+                </div>
+              )}
+              <div>
+                <Text
+                  type='secondary'
+                  style={{ display: 'block', marginBottom: '4px' }}
+                >
+                  Or paste an absolute folder path
+                </Text>
+                <Space.Compact style={{ width: '100%' }} size='large'>
+                  <Input
+                    placeholder='/abs/path/to/lerobot/dataset'
+                    value={localPath}
+                    onChange={(e) => setLocalPath(e.target.value)}
+                    onPressEnter={() => {
+                      void handleLoadLocalDataset();
+                    }}
+                    prefix={<FolderOpenOutlined />}
+                  />
+                  <Button
+                    type='primary'
+                    icon={<ArrowRightOutlined />}
+                    loading={isLoadingLocal}
+                    onClick={() => {
+                      void handleLoadLocalDataset();
+                    }}
+                  >
+                    Load
+                  </Button>
+                </Space.Compact>
+              </div>
             </Space>
           </Card>
         </div>

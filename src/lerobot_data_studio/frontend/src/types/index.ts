@@ -10,6 +10,17 @@ export interface VideoInfo {
   url: string;
   filename: string;
   language_instruction?: string[];
+  from_timestamp?: number;
+  to_timestamp?: number | null;
+}
+
+export interface SubtaskSegment {
+  subtask_index: number;
+  subtask: string;
+  start_time: number;
+  end_time: number;
+  start_frame: number;
+  end_frame: number;
 }
 
 export interface EpisodeData {
@@ -20,6 +31,24 @@ export interface EpisodeData {
   feature_names: string[];
   tasks: string[];
   actual_episode_index?: number | null;
+  subtasks?: SubtaskSegment[];
+  subtask_labels?: Record<number, string>;
+}
+
+export interface FeaturedLocalDataset {
+  repo_id: string;
+  path: string;
+  label?: string;
+}
+
+export interface FeaturedLocalDatasetsResponse {
+  datasets: FeaturedLocalDataset[];
+}
+
+export interface RegisterLocalDatasetResponse {
+  repo_id: string;
+  path: string;
+  message?: string;
 }
 
 export interface DatasetListResponse {

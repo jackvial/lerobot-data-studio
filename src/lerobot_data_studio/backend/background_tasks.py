@@ -37,12 +37,21 @@ def load_dataset_task(repo_id: str, state_store: StateStore = None):
         memory_before = get_process_memory_mb()
         logger.info(f"Memory before loading {repo_id}: {memory_before} MB")
 
-        state_store.set_loading_status(
-            repo_id,
-            DatasetLoadingStatus(progress=0.3, message=f"Downloading dataset {repo_id}..."),
-        )
-
-        dataset = LeRobotDataset(repo_id)
+        local_root = state_store.get_local_path(repo_id)
+        if local_root is not None:
+            state_store.set_loading_status(
+                repo_id,
+                DatasetLoadingStatus(
+                    progress=0.3, message=f"Loading local dataset from {local_root}..."
+                ),
+            )
+            dataset = LeRobotDataset(repo_id, root=local_root)
+        else:
+            state_store.set_loading_status(
+                repo_id,
+                DatasetLoadingStatus(progress=0.3, message=f"Downloading dataset {repo_id}..."),
+            )
+            dataset = LeRobotDataset(repo_id)
         state_store.cache_dataset(repo_id, dataset)
 
         memory_after = get_process_memory_mb()

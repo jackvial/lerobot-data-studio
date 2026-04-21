@@ -23,6 +23,7 @@ import { useSelectedEpisodes } from '@/hooks/useSelectedEpisodes';
 import { useVideoPreloader } from '@/hooks/useVideoPreloader';
 import VideoPlayer from './VideoPlayer';
 import DataChart from './DataChart';
+import SubtaskTimeline from './SubtaskTimeline';
 import LoadingIndicator from './LoadingIndicator';
 import EpisodeSidebar from './EpisodeSidebar';
 import EpisodeIndexDisplay from './EpisodeIndexDisplay';
@@ -449,6 +450,22 @@ const DatasetViewer: React.FC = () => {
                 episodeId={currentEpisodeId}
                 onTimeUpdate={setCurrentVideoTime}
               />
+
+              {episodeData.subtasks && episodeData.subtasks.length > 0 && (
+                <SubtaskTimeline
+                  subtasks={episodeData.subtasks}
+                  duration={
+                    episodeData.episode_data.length > 0
+                      ? Number(
+                          episodeData.episode_data[
+                            episodeData.episode_data.length - 1
+                          ]['timestamp']
+                        ) || 0
+                      : 0
+                  }
+                  currentTime={currentVideoTime}
+                />
+              )}
 
               <DataChart
                 episodeData={episodeData.episode_data}

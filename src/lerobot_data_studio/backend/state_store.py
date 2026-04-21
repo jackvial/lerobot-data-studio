@@ -22,6 +22,7 @@ class StateStore:
     dataset_loading_status: Dict[str, DatasetLoadingStatus] = field(default_factory=dict)
     loading_tasks: Dict[str, str] = field(default_factory=dict)
     creation_tasks: Dict[str, CreateTaskStatus] = field(default_factory=dict)
+    local_paths: Dict[str, Path] = field(default_factory=dict)
 
     def _update_or_create(self, store: dict, key: str, value: object, defaults: object = None):
         """Generic method to update or create entries with spreading pattern for Pydantic models"""
@@ -84,6 +85,12 @@ class StateStore:
 
     def clear_loading_tasks(self):
         self.loading_tasks.clear()
+
+    def register_local_path(self, repo_id: str, root: Path) -> None:
+        self.local_paths[repo_id] = Path(root)
+
+    def get_local_path(self, repo_id: str) -> Optional[Path]:
+        return self.local_paths.get(repo_id)
 
 
 # Create a singleton instance for the application

@@ -2,6 +2,7 @@ import logging
 import re
 import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import requests
 import uvicorn
@@ -24,10 +25,20 @@ from .models import (
     DatasetSearchResponse,
     DatasetValidationResponse,
     EpisodeData,
+    FeaturedLocalDataset,
+    FeaturedLocalDatasetsResponse,
+    RegisterLocalDatasetRequest,
+    RegisterLocalDatasetResponse,
     VideoInfo,
 )
 from .state_store import StateStore, get_state_store
 from .utils import get_episode_data
+
+LOCAL_NAMESPACE = "local"
+
+FEATURED_LOCAL_DATASETS: list[str] = [
+    "/home/jack/code/lerobot/outputs/so101_pickplace_success_120_v2_w_subtasks_v2",
+]
 
 init_logging()
 logger = logging.getLogger(__name__)
@@ -66,6 +77,16 @@ def check_repo_id(repo_id: str) -> None:
             f"Invalid name in repo_id: '{name}'. "
             "Only alphanumeric characters, dots, hyphens, and underscores are allowed"
         )
+
+
+def _sanitize_local_name(folder_name: str) -> str:
+    """Sanitize a folder name to fit the repo_id name regex used by check_repo_id."""
+    sanitized = re.sub(r"[^a-zA-Z0-9._-]", "_", folder_name)
+    return sanitized or "dataset"
+
+
+def _local_repo_id_for_path(path: Path) -> str:
+    return f"{LOCAL_NAMESPACE}/{_sanitize_local_name(path.name)}"
 
 
 @asynccontextmanager
@@ -173,7 +194,7 @@ async def get_episode(
     if episode_id < 0 or episode_id >= dataset.num_episodes:
         raise HTTPException(status_code=404, detail=f"Episode {episode_id} not found")
 
-    episode_data_items, feature_names = get_episode_data(dataset, episode_id)
+    episode_data_items, feature_names, subtasks, subtask_labels = get_episode_data(dataset, episode_id)
 
     dataset_info = DatasetInfo(
         repo_id=repo_id,
@@ -183,14 +204,25 @@ async def get_episode(
         version=str(getattr(dataset.meta, "version", getattr(dataset.meta, "_version", None))),
     )
 
-    video_paths = [dataset.meta.get_video_file_path(episode_id, key) for key in dataset.meta.video_keys]
-    videos_info = [
-        VideoInfo(
-            url=f"/api/videos/{repo_id}/{str(video_path)}",
-            filename=f"{video_path.parent.parent.name} ({video_path.parent.name})",
+    episode_meta = dataset.meta.episodes[episode_id]
+    videos_info: list[VideoInfo] = []
+    for key in dataset.meta.video_keys:
+        video_path = dataset.meta.get_video_file_path(episode_id, key)
+        # In LeRobot v3, multiple episodes are concatenated into a single
+        # video file. Extract the per-episode time range so the UI can
+        # clip playback to the relevant segment.
+        from_ts_raw = episode_meta.get(f"videos/{key}/from_timestamp", 0.0)
+        to_ts_raw = episode_meta.get(f"videos/{key}/to_timestamp")
+        from_ts = float(from_ts_raw) if from_ts_raw is not None else 0.0
+        to_ts = float(to_ts_raw) if to_ts_raw is not None else None
+        videos_info.append(
+            VideoInfo(
+                url=f"/api/videos/{repo_id}/{str(video_path)}",
+                filename=f"{video_path.parent.parent.name} ({video_path.parent.name})",
+                from_timestamp=from_ts,
+                to_timestamp=to_ts,
+            )
         )
-        for video_path in video_paths
-    ]
     tasks = dataset.meta.episodes[episode_id]["tasks"]
 
     if videos_info:
@@ -205,6 +237,8 @@ async def get_episode(
         # Used to visually sanity check indices are aligned
         actual_episode_index=episode_data_items[0].episode_index,
         tasks=tasks,
+        subtasks=subtasks,
+        subtask_labels=subtask_labels,
     )
 
 
@@ -319,6 +353,76 @@ async def load_dataset(
     background_tasks.add_task(load_dataset_task, repo_id, state_store)
 
     return {"status": "loading_started", "message": "Dataset loading has been started"}
+
+
+@app.get("/api/datasets/local/featured", response_model=FeaturedLocalDatasetsResponse)
+async def list_featured_local_datasets():
+    """Return a hardcoded list of convenient local dataset paths.
+
+    Entries whose folder no longer exists on disk are filtered out so the dropdown
+    only shows actually-loadable datasets.
+    """
+    datasets: list[FeaturedLocalDataset] = []
+    for raw_path in FEATURED_LOCAL_DATASETS:
+        path = Path(raw_path).expanduser()
+        if not path.exists() or not path.is_dir():
+            logger.info(f"Skipping featured local dataset (missing): {path}")
+            continue
+        if not (path / "meta" / "info.json").exists():
+            logger.info(f"Skipping featured local dataset (no meta/info.json): {path}")
+            continue
+        repo_id = _local_repo_id_for_path(path)
+        datasets.append(FeaturedLocalDataset(repo_id=repo_id, path=str(path), label=path.name))
+    return FeaturedLocalDatasetsResponse(datasets=datasets)
+
+
+@app.post("/api/datasets/local/register", response_model=RegisterLocalDatasetResponse)
+async def register_local_dataset(
+    request: RegisterLocalDatasetRequest,
+    background_tasks: BackgroundTasks,
+    state_store: StateStore = Depends(get_state_store),
+):
+    """Register a local LeRobotDataset folder and start loading it in the background."""
+    raw_path = request.path.strip()
+    if not raw_path:
+        raise HTTPException(status_code=400, detail="path must be a non-empty string")
+
+    path = Path(raw_path).expanduser().resolve()
+    if not path.exists() or not path.is_dir():
+        raise HTTPException(status_code=400, detail=f"Path does not exist or is not a directory: {path}")
+
+    info_path = path / "meta" / "info.json"
+    if not info_path.exists():
+        raise HTTPException(
+            status_code=400,
+            detail=f"Not a valid LeRobotDataset folder (missing meta/info.json): {path}",
+        )
+
+    repo_id = _local_repo_id_for_path(path)
+
+    try:
+        check_repo_id(repo_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    state_store.register_local_path(repo_id, path)
+
+    if state_store.is_dataset_cached(repo_id):
+        return RegisterLocalDatasetResponse(
+            repo_id=repo_id, path=str(path), message="Dataset already loaded"
+        )
+
+    if not state_store.is_dataset_loading(repo_id):
+        state_store.start_loading(repo_id)
+        state_store.set_loading_status(
+            repo_id,
+            DatasetLoadingStatus(status="loading", message=f"Loading local dataset from {path}..."),
+        )
+        background_tasks.add_task(load_dataset_task, repo_id, state_store)
+
+    return RegisterLocalDatasetResponse(
+        repo_id=repo_id, path=str(path), message="Local dataset registered, loading started"
+    )
 
 
 @app.get("/api/datasets/search", response_model=DatasetSearchResponse)

@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState, useMemo } from 'react';
 import {
   Card,
   Row,
@@ -15,6 +15,8 @@ interface VideoInfo {
   url: string;
   filename: string;
   language_instruction?: string[];
+  from_timestamp?: number;
+  to_timestamp?: number | null;
 }
 
 interface VideoPlayerProps {
@@ -22,6 +24,14 @@ interface VideoPlayerProps {
   episodeId: number;
   onTimeUpdate?: (time: number) => void;
 }
+
+// In LeRobot v3 datasets, multiple episodes are concatenated into a single
+// video file. Each VideoInfo therefore carries the [from_timestamp,
+// to_timestamp] range within that file that corresponds to the current
+// episode. The player exposes a "clip-relative" time line to the user
+// (starting at 0) while seeking the underlying <video> elements at the
+// appropriate absolute offsets.
+const EPS = 0.02;
 
 const VideoPlayer: React.FC<VideoPlayerProps> = ({
   videos,
@@ -31,11 +41,10 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const videoRefs = useRef<(HTMLVideoElement | null)[]>([]);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(0);
+  const [clipDuration, setClipDuration] = useState(0);
   const [isSeekingBySlider, setIsSeekingBySlider] = useState(false);
-  const [playbackSpeed, setPlaybackSpeed] = useState(3.0); // Default to 3x speed
+  const [playbackSpeed, setPlaybackSpeed] = useState(3.0);
 
-  // Speed options from 0.5x to 3x in 0.5x increments
   const speedOptions = [
     { label: '0.5x', value: 0.5 },
     { label: '1x', value: 1.0 },
@@ -45,31 +54,71 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     { label: '3x', value: 3.0 },
   ];
 
+  const fromTimestamps = useMemo(
+    () => videos.map((v) => v.from_timestamp ?? 0),
+    [videos]
+  );
+  const toTimestamps = useMemo(
+    () =>
+      videos.map((v) =>
+        v.to_timestamp == null ? Number.POSITIVE_INFINITY : v.to_timestamp
+      ),
+    [videos]
+  );
+
+  // The first video's clip range drives the shared timeline shown to the
+  // user. Other videos are kept in sync using their own offsets.
+  const primaryFrom = fromTimestamps[0] ?? 0;
+  const primaryTo = toTimestamps[0] ?? Number.POSITIVE_INFINITY;
+  const primaryClipDuration = Number.isFinite(primaryTo)
+    ? Math.max(0, primaryTo - primaryFrom)
+    : 0;
+
+  const clipToAbsolute = (clipTime: number, index: number) => {
+    const from = fromTimestamps[index] ?? 0;
+    const to = toTimestamps[index] ?? Number.POSITIVE_INFINITY;
+    const absolute = from + clipTime;
+    if (Number.isFinite(to)) {
+      return Math.min(absolute, to);
+    }
+    return absolute;
+  };
+
+  const absoluteToClip = (absoluteTime: number, index: number) => {
+    const from = fromTimestamps[index] ?? 0;
+    return Math.max(0, absoluteTime - from);
+  };
+
   useEffect(() => {
-    // Reset refs when videos change
     videoRefs.current = videoRefs.current.slice(0, videos.length);
   }, [videos]);
 
-  // Set duration when first video loads and apply initial speed
+  // Reset to the start of the new clip whenever the episode or video set
+  // changes.
   useEffect(() => {
-    const checkDuration = () => {
-      const firstVideo = videoRefs.current[0];
-      if (firstVideo && firstVideo.duration) {
-        setDuration(firstVideo.duration);
-        // Apply initial playback speed
-        videoRefs.current.forEach((video) => {
-          if (video) {
-            video.playbackRate = playbackSpeed;
-          }
-        });
+    setCurrentTime(0);
+    setIsPlaying(false);
+    videoRefs.current.forEach((video, index) => {
+      if (!video) {
+        return;
       }
-    };
+      try {
+        video.pause();
+      } catch {
+        // ignore
+      }
+      const target = clipToAbsolute(0, index);
+      if (Number.isFinite(target)) {
+        video.currentTime = target;
+      }
+    });
+    if (onTimeUpdate) {
+      onTimeUpdate(0);
+    }
+    // We intentionally only react to the episode/video change here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [episodeId, videos]);
 
-    const interval = setInterval(checkDuration, 100);
-    return () => clearInterval(interval);
-  }, [videos, playbackSpeed]);
-
-  // Update playback speed when changed
   useEffect(() => {
     videoRefs.current.forEach((video) => {
       if (video) {
@@ -78,20 +127,25 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     });
   }, [playbackSpeed]);
 
-  // Add keyboard event handler for spacebar
+  // Update the displayed clip duration once metadata is known. We prefer
+  // the explicit to_timestamp from the backend, but fall back to the
+  // underlying video duration when the dataset doesn't provide one.
+  useEffect(() => {
+    if (primaryClipDuration > 0) {
+      setClipDuration(primaryClipDuration);
+    }
+  }, [primaryClipDuration]);
+
   useEffect(() => {
     const handleKeyPress = (e: KeyboardEvent) => {
-      // Check if the target is an input element to avoid conflicts
       const target = e.target as HTMLElement;
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
         return;
       }
 
-      // Spacebar key
       if (e.code === 'Space' || e.key === ' ') {
-        e.preventDefault(); // Prevent page scroll
+        e.preventDefault();
 
-        // Inline play/pause logic to avoid dependency issues
         const allVideos = videoRefs.current.filter((v) => v !== null);
         const firstVideo = allVideos[0];
 
@@ -105,17 +159,48 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
     window.addEventListener('keydown', handleKeyPress);
     return () => window.removeEventListener('keydown', handleKeyPress);
-  }, []); // Empty dependency array since we're not using external state
+  }, []);
 
-  const handleTimeUpdate = (e: React.SyntheticEvent<HTMLVideoElement>) => {
-    if (!isSeekingBySlider) {
-      const video = e.currentTarget;
-      setCurrentTime(video.currentTime);
-      if (video.duration && !isNaN(video.duration)) {
-        setDuration(video.duration);
-      }
+  const handleTimeUpdate = (
+    e: React.SyntheticEvent<HTMLVideoElement>,
+    index: number
+  ) => {
+    if (isSeekingBySlider) {
+      return;
+    }
+    const video = e.currentTarget;
+    const to = toTimestamps[index] ?? Number.POSITIVE_INFINITY;
+
+    // Stop playback once we reach the end of the current episode's clip
+    // segment so we don't bleed into the next episode's frames.
+    if (Number.isFinite(to) && video.currentTime >= to - EPS) {
+      videoRefs.current.forEach((v, i) => {
+        if (!v) {
+          return;
+        }
+        v.pause();
+        const clampTarget = clipToAbsolute(
+          Math.max(0, primaryClipDuration - EPS),
+          i
+        );
+        if (Number.isFinite(clampTarget)) {
+          v.currentTime = clampTarget;
+        }
+      });
+      const clamped = primaryClipDuration;
+      setCurrentTime(clamped);
+      setIsPlaying(false);
       if (onTimeUpdate) {
-        onTimeUpdate(video.currentTime);
+        onTimeUpdate(clamped);
+      }
+      return;
+    }
+
+    if (index === 0) {
+      const clipTime = absoluteToClip(video.currentTime, 0);
+      setCurrentTime(clipTime);
+      if (onTimeUpdate) {
+        onTimeUpdate(clipTime);
       }
     }
   };
@@ -124,10 +209,12 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     setIsSeekingBySlider(true);
     setCurrentTime(value);
 
-    // Update all videos
-    videoRefs.current.forEach((video) => {
+    videoRefs.current.forEach((video, index) => {
       if (video) {
-        video.currentTime = value;
+        const target = clipToAbsolute(value, index);
+        if (Number.isFinite(target)) {
+          video.currentTime = target;
+        }
       }
     });
 
@@ -135,7 +222,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
       onTimeUpdate(value);
     }
 
-    // Reset seeking flag after a short delay
     setTimeout(() => setIsSeekingBySlider(false), 100);
   };
 
@@ -146,17 +232,38 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
       allVideos.forEach((video) => video?.pause());
       setIsPlaying(false);
     } else {
+      // If the playhead is parked at (or past) the end of the clip, rewind
+      // to the start before resuming playback.
+      if (
+        primaryClipDuration > 0 &&
+        currentTime >= primaryClipDuration - EPS
+      ) {
+        videoRefs.current.forEach((video, index) => {
+          if (video) {
+            const target = clipToAbsolute(0, index);
+            if (Number.isFinite(target)) {
+              video.currentTime = target;
+            }
+          }
+        });
+        setCurrentTime(0);
+        if (onTimeUpdate) {
+          onTimeUpdate(0);
+        }
+      }
       allVideos.forEach((video) => video?.play());
       setIsPlaying(true);
     }
   };
 
   const handleStop = () => {
-    const allVideos = videoRefs.current.filter((v) => v !== null);
-    allVideos.forEach((video) => {
+    videoRefs.current.forEach((video, index) => {
       if (video) {
         video.pause();
-        video.currentTime = 0;
+        const target = clipToAbsolute(0, index);
+        if (Number.isFinite(target)) {
+          video.currentTime = target;
+        }
       }
     });
     setIsPlaying(false);
@@ -167,20 +274,26 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   };
 
   const syncVideos = (index: number) => {
-    if (!isSeekingBySlider) {
-      const sourceVideo = videoRefs.current[index];
-      if (sourceVideo) {
-        videoRefs.current.forEach((video, i) => {
-          if (
-            video &&
-            i !== index &&
-            Math.abs(video.currentTime - sourceVideo.currentTime) > 0.1
-          ) {
-            video.currentTime = sourceVideo.currentTime;
-          }
-        });
-      }
+    if (isSeekingBySlider) {
+      return;
     }
+    const sourceVideo = videoRefs.current[index];
+    if (!sourceVideo) {
+      return;
+    }
+    const sourceClipTime = absoluteToClip(sourceVideo.currentTime, index);
+    videoRefs.current.forEach((video, i) => {
+      if (!video || i === index) {
+        return;
+      }
+      const targetAbsolute = clipToAbsolute(sourceClipTime, i);
+      if (
+        Number.isFinite(targetAbsolute) &&
+        Math.abs(video.currentTime - targetAbsolute) > 0.1
+      ) {
+        video.currentTime = targetAbsolute;
+      }
+    });
   };
 
   const handleSpeedChange = (speed: number) => {
@@ -222,7 +335,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
             size='small'
           />
           <span style={{ color: 'rgba(255, 255, 255, 0.65)' }}>
-            {currentTime.toFixed(1)}s / {duration.toFixed(1)}s
+            {currentTime.toFixed(1)}s / {clipDuration.toFixed(1)}s
           </span>
         </Space>
       }
@@ -239,16 +352,27 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 controls={false}
                 style={{ width: '100%', height: 'auto' }}
                 onTimeUpdate={(e) => {
-                  handleTimeUpdate(e);
+                  handleTimeUpdate(e, index);
                   syncVideos(index);
                 }}
                 onLoadedMetadata={(e) => {
-                  const video = e.currentTarget;
-                  if (video.duration && !isNaN(video.duration)) {
-                    setDuration(video.duration);
+                  const el = e.currentTarget;
+                  el.playbackRate = playbackSpeed;
+                  // Seek to the start of this episode's segment.
+                  const target = clipToAbsolute(0, index);
+                  if (Number.isFinite(target)) {
+                    el.currentTime = target;
                   }
-                  // Apply current playback speed to newly loaded video
-                  video.playbackRate = playbackSpeed;
+                  // If the dataset didn't supply a to_timestamp, fall back
+                  // to the underlying video duration for the timeline.
+                  if (
+                    index === 0 &&
+                    primaryClipDuration === 0 &&
+                    el.duration &&
+                    !isNaN(el.duration)
+                  ) {
+                    setClipDuration(Math.max(0, el.duration - primaryFrom));
+                  }
                 }}
                 onPlay={() => setIsPlaying(true)}
                 onPause={() => setIsPlaying(false)}
@@ -275,7 +399,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
       <div style={{ marginTop: '16px', padding: '0 8px' }}>
         <Slider
           min={0}
-          max={duration || 100}
+          max={clipDuration || 100}
           value={currentTime}
           step={0.1}
           onChange={handleSliderChange}

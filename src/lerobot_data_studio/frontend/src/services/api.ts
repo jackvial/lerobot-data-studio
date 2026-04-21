@@ -6,6 +6,8 @@ import {
   CreateDatasetResponse,
   DatasetLoadingStatus,
   CreateTaskStatus,
+  FeaturedLocalDatasetsResponse,
+  RegisterLocalDatasetResponse,
 } from '@/types';
 
 const api = axios.create({
@@ -115,6 +117,26 @@ export const datasetApi = {
   getCreateStatus: async (taskId: string): Promise<CreateTaskStatus> => {
     const response = await api.get<CreateTaskStatus>(
       `/datasets/create/status/${taskId}`
+    );
+    return response.data;
+  },
+
+  // List hardcoded local datasets available for one-click loading
+  listFeaturedLocalDatasets:
+    async (): Promise<FeaturedLocalDatasetsResponse> => {
+      const response = await api.get<FeaturedLocalDatasetsResponse>(
+        '/datasets/local/featured'
+      );
+      return response.data;
+    },
+
+  // Register a local dataset folder and start loading it
+  registerLocalDataset: async (
+    path: string
+  ): Promise<RegisterLocalDatasetResponse> => {
+    const response = await api.post<RegisterLocalDatasetResponse>(
+      '/datasets/local/register',
+      { path }
     );
     return response.data;
   },
