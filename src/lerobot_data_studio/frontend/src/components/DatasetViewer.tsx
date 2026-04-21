@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Layout,
@@ -29,11 +29,8 @@ import EpisodeSidebar from './EpisodeSidebar';
 import EpisodeIndexDisplay from './EpisodeIndexDisplay';
 import EpisodeNavigation from './EpisodeNavigation';
 import DatasetCompletionModal from './DatasetCompletionModal';
+import SubtaskAnnotationPanel from './SubtaskAnnotationPanel';
 import { createDatasetRequest } from '@/utils/createDataset';
-import {
-  getEpisodeTimeRange,
-  normalizeIdleSpans,
-} from '@/utils/episodeTiming';
 
 const { Header, Content, Sider } = Layout;
 const { Title, Text } = Typography;
@@ -124,6 +121,14 @@ const DatasetViewer: React.FC = () => {
     queryKey: ['episodes', namespace, name],
     queryFn: () => datasetApi.listEpisodes(namespace!, name!),
     enabled: !!namespace && !!name && episodeData != null,
+  });
+
+  // Per-episode subtask annotation summary used for sidebar badges
+  const { data: subtaskSummary } = useQuery({
+    queryKey: ['subtaskSummary', namespace, name],
+    queryFn: () => datasetApi.getSubtaskAnnotationsSummary(namespace!, name!),
+    enabled: !!namespace && !!name && status?.status === 'ready',
+    staleTime: 5 * 60 * 1000,
   });
 
   // Get idle-time analysis for current episode
@@ -232,14 +237,6 @@ const DatasetViewer: React.FC = () => {
     episodeData?.dataset_info.num_episodes || 0,
     getVideoUrl
   );
-
-  const episodeTimeRange = useMemo(() => {
-    return getEpisodeTimeRange(episodeData?.episode_data ?? []);
-  }, [episodeData?.episode_data]);
-
-  const normalizedIdleSpans = useMemo(() => {
-    return normalizeIdleSpans(idleAnalysis?.spans ?? [], episodeTimeRange.startTime);
-  }, [episodeTimeRange.startTime, idleAnalysis?.spans]);
 
   const handleEpisodeChange = (newEpisodeId: number) => {
     setCurrentEpisodeId(newEpisodeId);
@@ -459,6 +456,7 @@ const DatasetViewer: React.FC = () => {
               onSelectAll={() => selectAll(episodesList.episodes)}
               onClearSelection={clearSelection}
               onEpisodeClick={handleEpisodeChange}
+              annotationSummary={subtaskSummary?.episodes}
             />
           )}
         </Sider>
@@ -491,14 +489,41 @@ const DatasetViewer: React.FC = () => {
                 videos={episodeData.videos_info}
                 episodeId={currentEpisodeId}
                 onTimeUpdate={setCurrentVideoTime}
-                sliceStartTime={episodeTimeRange.startTime}
-                sliceEndTime={episodeTimeRange.endTime}
+              />
+
+              <SubtaskAnnotationPanel
+                namespace={namespace!}
+                name={name!}
+                datasetId={datasetId}
+                episodeId={currentEpisodeId}
+                episodeDuration={
+                  idleAnalysis?.episode_duration ??
+                  (episodeData.episode_data.length > 0
+                    ? Number(
+                        (
+                          episodeData.episode_data[
+                            episodeData.episode_data.length - 1
+                          ] as any
+                        ).timestamp ?? 0
+                      )
+                    : 0)
+                }
+                fps={episodeData.dataset_info.fps}
+                currentTime={currentVideoTime}
+                onSeek={setCurrentVideoTime}
               />
 
               <IdleTimeline
-                spans={normalizedIdleSpans}
+                spans={idleAnalysis?.spans ?? []}
                 episodeDuration={
-                  idleAnalysis?.episode_duration ?? episodeTimeRange.duration
+                  idleAnalysis?.episode_duration ??
+                  (episodeData.episode_data.length > 0
+                    ? Number(
+                        episodeData.episode_data[
+                          episodeData.episode_data.length - 1
+                        ]?.timestamp ?? 0
+                      )
+                    : 0)
                 }
                 totalIdleSeconds={idleAnalysis?.total_idle_seconds ?? 0}
                 currentTime={currentVideoTime}
@@ -513,7 +538,6 @@ const DatasetViewer: React.FC = () => {
                 episodeData={episodeData.episode_data}
                 featureNames={episodeData.feature_names}
                 currentTime={currentVideoTime}
-                timeOffset={episodeTimeRange.startTime}
               />
             </Space>
           ) : null}

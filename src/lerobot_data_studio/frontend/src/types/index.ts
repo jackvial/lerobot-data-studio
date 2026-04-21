@@ -10,6 +10,8 @@ export interface VideoInfo {
   url: string;
   filename: string;
   language_instruction?: string[];
+  from_timestamp?: number | null;
+  to_timestamp?: number | null;
 }
 
 export interface EpisodeDataPoint {
@@ -75,4 +77,40 @@ export interface IdleAnalysisResponse {
   min_duration: number;
   total_idle_seconds: number;
   episode_duration: number;
+}
+
+export interface SubtaskSegment {
+  name: string;
+  start: number;
+  end: number;
+}
+
+export interface EpisodeSubtaskAnnotations {
+  episode_index: number;
+  description: string;
+  skills: SubtaskSegment[];
+}
+
+export interface SubtaskAnnotationsResponse {
+  coarse_description: string;
+  skill_to_subtask_index: Record<string, number>;
+  episodes: Record<string, EpisodeSubtaskAnnotations>;
+}
+
+export interface SubtaskTaskListResponse {
+  tasks: string[];
+}
+
+export interface SaveSubtaskAnnotationsRequest {
+  description?: string;
+  skills: SubtaskSegment[];
+}
+
+export interface EpisodeSubtaskSummary {
+  has_annotations: boolean;
+  segment_count: number;
+}
+
+export interface SubtaskAnnotationsSummaryResponse {
+  episodes: Record<number, EpisodeSubtaskSummary>;
 }

@@ -15,6 +15,11 @@ class VideoInfo(BaseModel):
     url: str
     filename: str
     language_instruction: Optional[List[str]] = None
+    # Slice of the underlying video file (in seconds) that belongs to this
+    # episode. v3 LeRobot datasets pack multiple episodes into a single mp4
+    # so the player must clamp playback to this window. None when unavailable.
+    from_timestamp: Optional[float] = None
+    to_timestamp: Optional[float] = None
 
 
 class EpisodeDataItem(BaseModel):
@@ -91,3 +96,55 @@ class IdleAnalysisResponse(BaseModel):
     min_duration: float
     total_idle_seconds: float
     episode_duration: float
+
+
+class SubtaskSegment(BaseModel):
+    """A single labeled time range for an episode (mirrors reference `Skill`).
+
+    Range bounds are not strictly validated here so the persistence helper can
+    clamp out-of-range times against the actual episode duration.
+    """
+
+    name: str
+    start: float
+    end: float
+
+
+class EpisodeSubtaskAnnotations(BaseModel):
+    """All subtask segments for a single episode (mirrors reference `EpisodeSkills`)."""
+
+    episode_index: int
+    description: str = ""
+    skills: List[SubtaskSegment] = Field(default_factory=list)
+
+
+class SubtaskTaskListResponse(BaseModel):
+    """List of allowed subtask names served to the frontend radio."""
+
+    tasks: List[str]
+
+
+class SubtaskAnnotationsResponse(BaseModel):
+    """Full `skills.json` payload returned to the frontend."""
+
+    coarse_description: str = ""
+    skill_to_subtask_index: Dict[str, int] = Field(default_factory=dict)
+    episodes: Dict[str, EpisodeSubtaskAnnotations] = Field(default_factory=dict)
+
+
+class SaveSubtaskAnnotationsRequest(BaseModel):
+    """Save payload for a single episode's subtask segments."""
+
+    description: Optional[str] = None
+    skills: List[SubtaskSegment] = Field(default_factory=list)
+
+
+class EpisodeSubtaskSummary(BaseModel):
+    has_annotations: bool
+    segment_count: int
+
+
+class SubtaskAnnotationsSummaryResponse(BaseModel):
+    """Per-episode annotation status used by the sidebar badges."""
+
+    episodes: Dict[int, EpisodeSubtaskSummary] = Field(default_factory=dict)

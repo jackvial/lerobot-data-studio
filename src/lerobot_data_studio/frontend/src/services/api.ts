@@ -7,6 +7,10 @@ import {
   DatasetLoadingStatus,
   CreateTaskStatus,
   IdleAnalysisResponse,
+  SaveSubtaskAnnotationsRequest,
+  SubtaskAnnotationsResponse,
+  SubtaskAnnotationsSummaryResponse,
+  SubtaskTaskListResponse,
 } from '@/types';
 
 const api = axios.create({
@@ -137,6 +141,48 @@ export const datasetApi = {
   getCreateStatus: async (taskId: string): Promise<CreateTaskStatus> => {
     const response = await api.get<CreateTaskStatus>(
       `/datasets/create/status/${taskId}`
+    );
+    return response.data;
+  },
+
+  // Get the configured subtask task list
+  getSubtaskTasks: async (): Promise<SubtaskTaskListResponse> => {
+    const response = await api.get<SubtaskTaskListResponse>('/subtasks/tasks');
+    return response.data;
+  },
+
+  // Get all subtask annotations for a dataset
+  getSubtaskAnnotations: async (
+    namespace: string,
+    name: string
+  ): Promise<SubtaskAnnotationsResponse> => {
+    const response = await api.get<SubtaskAnnotationsResponse>(
+      `/datasets/${namespace}/${name}/subtasks`
+    );
+    return response.data;
+  },
+
+  // Get per-episode annotation summary used by the sidebar badges
+  getSubtaskAnnotationsSummary: async (
+    namespace: string,
+    name: string
+  ): Promise<SubtaskAnnotationsSummaryResponse> => {
+    const response = await api.get<SubtaskAnnotationsSummaryResponse>(
+      `/datasets/${namespace}/${name}/subtasks/summary`
+    );
+    return response.data;
+  },
+
+  // Save subtask annotations for a single episode
+  saveSubtaskAnnotations: async (
+    namespace: string,
+    name: string,
+    episodeId: number,
+    request: SaveSubtaskAnnotationsRequest
+  ): Promise<SubtaskAnnotationsResponse> => {
+    const response = await api.put<SubtaskAnnotationsResponse>(
+      `/datasets/${namespace}/${name}/episodes/${episodeId}/subtasks`,
+      request
     );
     return response.data;
   },

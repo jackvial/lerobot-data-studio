@@ -3,20 +3,17 @@ import { Card, Empty } from 'antd';
 import Dygraph from 'dygraphs';
 import 'dygraphs/dist/dygraph.css';
 import { EpisodeDataPoint } from '@/types';
-import { normalizeEpisodeTimestamp } from '@/utils/episodeTiming';
 
 interface DataChartProps {
   episodeData: EpisodeDataPoint[];
   featureNames: string[];
   currentTime?: number;
-  timeOffset?: number;
 }
 
 const DataChart: React.FC<DataChartProps> = ({
   episodeData,
   featureNames,
   currentTime,
-  timeOffset = 0,
 }) => {
   const chartRef = useRef<HTMLDivElement>(null);
   const dygraphRef = useRef<Dygraph | null>(null);
@@ -26,7 +23,7 @@ const DataChart: React.FC<DataChartProps> = ({
 
     try {
       const data = episodeData.map((row) => {
-        const timestamp = normalizeEpisodeTimestamp(row.timestamp, timeOffset);
+        const timestamp = row.timestamp ?? 0;
         const observation = row.observation || [];
 
         // In Dygraph the first value is always the X axis
@@ -39,7 +36,7 @@ const DataChart: React.FC<DataChartProps> = ({
       console.error('Error converting JSON to array format:', error);
       return null;
     }
-  }, [episodeData, timeOffset]);
+  }, [episodeData]);
 
   useEffect(() => {
     if (!chartRef.current || !chartData || chartData.length === 0) return;

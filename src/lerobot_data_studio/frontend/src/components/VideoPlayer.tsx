@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Card,
   Row,
@@ -11,155 +11,96 @@ import {
 } from 'antd';
 import { PlayCircleOutlined, PauseCircleOutlined } from '@ant-design/icons';
 import { VideoInfo } from '@/types';
-
-const CLIP_TOLERANCE_SECONDS = 0.25;
+import {
+  VideoTimeRange,
+  clampToVideoRange,
+  getVideoTimeRange,
+} from '@/utils/episodeTiming';
 
 interface VideoPlayerProps {
   videos: VideoInfo[];
   episodeId: number;
   onTimeUpdate?: (time: number) => void;
-  sliceStartTime?: number;
-  sliceEndTime?: number;
 }
+
+const SPEED_OPTIONS = [
+  { label: '0.5x', value: 0.5 },
+  { label: '1x', value: 1.0 },
+  { label: '1.5x', value: 1.5 },
+  { label: '2x', value: 2.0 },
+  { label: '2.5x', value: 2.5 },
+  { label: '3x', value: 3.0 },
+];
 
 const VideoPlayer: React.FC<VideoPlayerProps> = ({
   videos,
   episodeId,
   onTimeUpdate,
-  sliceStartTime = 0,
-  sliceEndTime,
 }) => {
   const videoRefs = useRef<(HTMLVideoElement | null)[]>([]);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(0);
   const [isSeekingBySlider, setIsSeekingBySlider] = useState(false);
-  const [playbackSpeed, setPlaybackSpeed] = useState(3.0); // Default to 3x speed
-  const clipStartTime = Math.max(sliceStartTime, 0);
-  const expectedClipDuration =
-    sliceEndTime !== undefined ? Math.max(sliceEndTime - clipStartTime, 0) : undefined;
+  const [playbackSpeed, setPlaybackSpeed] = useState(3.0);
 
-  // Speed options from 0.5x to 3x in 0.5x increments
-  const speedOptions = [
-    { label: '0.5x', value: 0.5 },
-    { label: '1x', value: 1.0 },
-    { label: '1.5x', value: 1.5 },
-    { label: '2x', value: 2.0 },
-    { label: '2.5x', value: 2.5 },
-    { label: '3x', value: 3.0 },
-  ];
+  const videoRanges = useMemo(
+    () => videos.map((video) => getVideoTimeRange(video)),
+    [videos]
+  );
+
+  const referenceRange: VideoTimeRange = videoRanges[0] ?? {
+    fromTimestamp: 0,
+    toTimestamp: null,
+    duration: null,
+  };
+
+  const [duration, setDuration] = useState(referenceRange.duration ?? 0);
 
   useEffect(() => {
-    // Reset refs when videos change
     videoRefs.current = videoRefs.current.slice(0, videos.length);
   }, [videos.length]);
 
-  useEffect(() => {
-    setIsPlaying(false);
-    setIsSeekingBySlider(false);
-    setCurrentTime(0);
-    setDuration(
-      sliceEndTime !== undefined ? Math.max(sliceEndTime - clipStartTime, 0) : 0
-    );
-  }, [episodeId, videos.length, clipStartTime, sliceEndTime]);
-
-  // Update playback speed when changed
-  useEffect(() => {
-    videoRefs.current.forEach((video) => {
-      if (video) {
-        video.playbackRate = playbackSpeed;
+  const getVideoUpperBound = useCallback(
+    (index: number, mediaDuration: number): number => {
+      const range = videoRanges[index];
+      if (!range) {
+        return mediaDuration || 0;
       }
-    });
-  }, [playbackSpeed]);
-
-  const getMediaSliceStartTime = useCallback(
-    (video: HTMLVideoElement | null): number => {
-      const hasFullVideoDuration =
-        video !== null &&
-        Number.isFinite(video.duration) &&
-        video.duration > 0 &&
-        sliceEndTime !== undefined &&
-        video.duration >= sliceEndTime - CLIP_TOLERANCE_SECONDS;
-
-      if (hasFullVideoDuration) {
-        return clipStartTime;
+      if (range.toTimestamp != null) {
+        return mediaDuration > 0
+          ? Math.min(range.toTimestamp, mediaDuration)
+          : range.toTimestamp;
       }
-
-      return 0;
+      return mediaDuration || range.fromTimestamp;
     },
-    [clipStartTime, sliceEndTime]
+    [videoRanges]
   );
 
-  const getVideoEndTime = useCallback(
-    (video: HTMLVideoElement | null): number => {
-      const hasLoadedDuration =
-        video !== null && Number.isFinite(video.duration) && video.duration > 0;
-      const mediaStart = getMediaSliceStartTime(video);
-
-      if (!hasLoadedDuration) {
-        if (expectedClipDuration !== undefined) {
-          return mediaStart + expectedClipDuration;
-        }
-
-        return mediaStart;
-      }
-
-      if (sliceEndTime !== undefined) {
-        if (mediaStart === 0) {
-          return Math.min(expectedClipDuration ?? video.duration, video.duration);
-        }
-
-        return Math.max(Math.min(sliceEndTime, video.duration), mediaStart);
-      }
-
-      return video.duration;
-    },
-    [expectedClipDuration, getMediaSliceStartTime, sliceEndTime]
-  );
-
-  const getClipDuration = useCallback(
-    (video: HTMLVideoElement | null): number => {
-      return Math.max(getVideoEndTime(video) - getMediaSliceStartTime(video), 0);
-    },
-    [getMediaSliceStartTime, getVideoEndTime]
-  );
-
-  const getClampedAbsoluteTime = useCallback(
-    (video: HTMLVideoElement | null, nextAbsoluteTime: number): number => {
-      const mediaStart = getMediaSliceStartTime(video);
-      const clampedStart = Math.max(nextAbsoluteTime, mediaStart);
-      const clipEnd = getVideoEndTime(video);
-
-      if (clipEnd <= mediaStart) {
-        return mediaStart;
-      }
-
-      return Math.min(clampedStart, clipEnd);
-    },
-    [getMediaSliceStartTime, getVideoEndTime]
-  );
-
-  const updateDisplayedTime = useCallback(
+  const seekVideoToOffset = useCallback(
     (
-      video: HTMLVideoElement | null,
-      nextAbsoluteTime: number,
-      nextDuration?: number
-    ) => {
-      const nextCurrentTime = Math.max(
-        nextAbsoluteTime - getMediaSliceStartTime(video),
-        0
-      );
-      setCurrentTime(nextCurrentTime);
-
-      if (nextDuration !== undefined) {
-        setDuration(nextDuration);
-      }
-
-      if (onTimeUpdate) {
-        onTimeUpdate(nextCurrentTime);
-      }
+      video: HTMLVideoElement,
+      index: number,
+      relativeTime: number
+    ): number => {
+      const range = videoRanges[index] ?? referenceRange;
+      const mediaDuration = Number.isFinite(video.duration) ? video.duration : 0;
+      const absoluteTarget = range.fromTimestamp + Math.max(relativeTime, 0);
+      const clamped = clampToVideoRange(absoluteTarget, range, mediaDuration);
+      video.currentTime = clamped;
+      return clamped - range.fromTimestamp;
     },
-    [getMediaSliceStartTime, onTimeUpdate]
+    [referenceRange, videoRanges]
+  );
+
+  const seekAllToOffset = useCallback(
+    (relativeTime: number) => {
+      videoRefs.current.forEach((video, index) => {
+        if (video) {
+          seekVideoToOffset(video, index, relativeTime);
+        }
+      });
+    },
+    [seekVideoToOffset]
   );
 
   const pauseAllVideos = useCallback(() => {
@@ -171,23 +112,44 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     setIsPlaying(false);
   }, []);
 
-  const seekAllVideos = useCallback(
-    (nextAbsoluteTime: number) => {
-      videoRefs.current.forEach((video) => {
-        if (video) {
-          video.currentTime = getClampedAbsoluteTime(video, nextAbsoluteTime);
-        }
-      });
-    },
-    [getClampedAbsoluteTime]
-  );
+  // When the episode (and therefore the slice window) changes, snap every
+  // loaded video back to its slice start. This is essential because v3 LeRobot
+  // datasets pack multiple episodes into the same mp4, so React keeps the
+  // existing <video> element when the URL doesn't change between episodes.
+  useEffect(() => {
+    setIsPlaying(false);
+    setIsSeekingBySlider(false);
+    setCurrentTime(0);
+    setDuration(referenceRange.duration ?? 0);
+    seekAllToOffset(0);
+    if (onTimeUpdate) {
+      onTimeUpdate(0);
+    }
+    // We intentionally exclude onTimeUpdate from the dependency array so that
+    // a parent re-rendering with a fresh callback identity does not keep
+    // resetting the player while the episode is unchanged.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    episodeId,
+    referenceRange.fromTimestamp,
+    referenceRange.toTimestamp,
+    referenceRange.duration,
+    seekAllToOffset,
+  ]);
+
+  useEffect(() => {
+    videoRefs.current.forEach((video) => {
+      if (video) {
+        video.playbackRate = playbackSpeed;
+      }
+    });
+  }, [playbackSpeed]);
 
   const togglePlayback = useCallback(() => {
     const allVideos = videoRefs.current.filter(
       (video): video is HTMLVideoElement => video !== null
     );
     const firstVideo = allVideos[0];
-
     if (!firstVideo) {
       return;
     }
@@ -197,22 +159,17 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
       return;
     }
 
-    const clipDuration = getClipDuration(firstVideo);
-    if (clipDuration <= 0) {
-      const mediaStart = getMediaSliceStartTime(firstVideo);
-      seekAllVideos(mediaStart);
-      updateDisplayedTime(firstVideo, mediaStart, clipDuration);
-      return;
-    }
-
-    const mediaStart = getMediaSliceStartTime(firstVideo);
-    const clipEnd = getVideoEndTime(firstVideo);
-    const shouldRestartFromSliceStart =
-      firstVideo.currentTime < mediaStart || firstVideo.currentTime >= clipEnd;
-
-    if (shouldRestartFromSliceStart) {
-      seekAllVideos(mediaStart);
-      updateDisplayedTime(firstVideo, mediaStart, clipDuration);
+    const upperBound = getVideoUpperBound(0, firstVideo.duration);
+    const lowerBound = referenceRange.fromTimestamp;
+    if (
+      firstVideo.currentTime < lowerBound ||
+      firstVideo.currentTime >= upperBound
+    ) {
+      seekAllToOffset(0);
+      setCurrentTime(0);
+      if (onTimeUpdate) {
+        onTimeUpdate(0);
+      }
     }
 
     allVideos.forEach((video) => {
@@ -220,27 +177,22 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     });
     setIsPlaying(true);
   }, [
-    getClipDuration,
-    getMediaSliceStartTime,
-    getVideoEndTime,
+    getVideoUpperBound,
     isPlaying,
+    onTimeUpdate,
     pauseAllVideos,
-    seekAllVideos,
-    updateDisplayedTime,
+    referenceRange.fromTimestamp,
+    seekAllToOffset,
   ]);
 
-  // Add keyboard event handler for spacebar
   useEffect(() => {
     const handleKeyPress = (e: KeyboardEvent) => {
-      // Check if the target is an input element to avoid conflicts
       const target = e.target as HTMLElement;
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
         return;
       }
-
-      // Spacebar key
       if (e.code === 'Space' || e.key === ' ') {
-        e.preventDefault(); // Prevent page scroll
+        e.preventDefault();
         togglePlayback();
       }
     };
@@ -249,52 +201,77 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     return () => window.removeEventListener('keydown', handleKeyPress);
   }, [togglePlayback]);
 
-  const handleTimeUpdate = (e: React.SyntheticEvent<HTMLVideoElement>) => {
+  const handleTimeUpdate = (
+    index: number,
+    e: React.SyntheticEvent<HTMLVideoElement>
+  ) => {
     if (isSeekingBySlider) {
       return;
     }
-
     const video = e.currentTarget;
-    const mediaStart = getMediaSliceStartTime(video);
+    const range = videoRanges[index] ?? referenceRange;
+    const upperBound = getVideoUpperBound(index, video.duration);
 
-    if (video.currentTime < mediaStart) {
-      video.currentTime = mediaStart;
+    if (video.currentTime < range.fromTimestamp) {
+      video.currentTime = range.fromTimestamp;
     }
 
-    const clipEnd = getVideoEndTime(video);
-    const clipDuration = getClipDuration(video);
-
-    if (video.currentTime >= clipEnd) {
-      videoRefs.current.forEach((currentVideo) => {
-        if (currentVideo) {
-          currentVideo.currentTime = getClampedAbsoluteTime(currentVideo, clipEnd);
-          currentVideo.pause();
+    if (video.currentTime >= upperBound) {
+      videoRefs.current.forEach((otherVideo, otherIndex) => {
+        if (otherVideo) {
+          const otherUpper = getVideoUpperBound(otherIndex, otherVideo.duration);
+          otherVideo.currentTime = otherUpper;
+          otherVideo.pause();
         }
       });
       setIsPlaying(false);
-      updateDisplayedTime(video, clipEnd, clipDuration);
+      const clipDuration = upperBound - range.fromTimestamp;
+      setCurrentTime(clipDuration);
+      if (onTimeUpdate) {
+        onTimeUpdate(clipDuration);
+      }
       return;
     }
 
-    updateDisplayedTime(video, video.currentTime, clipDuration);
+    if (index === 0) {
+      const offset = video.currentTime - range.fromTimestamp;
+      setCurrentTime(offset);
+      if (onTimeUpdate) {
+        onTimeUpdate(offset);
+      }
+    }
+  };
+
+  const syncVideos = (sourceIndex: number) => {
+    if (isSeekingBySlider) {
+      return;
+    }
+    const sourceVideo = videoRefs.current[sourceIndex];
+    if (!sourceVideo) {
+      return;
+    }
+    const sourceRange = videoRanges[sourceIndex] ?? referenceRange;
+    const sourceOffset = sourceVideo.currentTime - sourceRange.fromTimestamp;
+    videoRefs.current.forEach((video, index) => {
+      if (video && index !== sourceIndex) {
+        const range = videoRanges[index] ?? referenceRange;
+        const desired = range.fromTimestamp + sourceOffset;
+        if (Math.abs(video.currentTime - desired) > 0.1) {
+          seekVideoToOffset(video, index, sourceOffset);
+        }
+      }
+    });
   };
 
   const handleSliderChange = (value: number) => {
-    const referenceVideo = videoRefs.current[0];
-    const clampedValue = Math.min(Math.max(value, 0), duration);
-    const nextAbsoluteTime =
-      getMediaSliceStartTime(referenceVideo) + clampedValue;
-
+    const clipDuration = duration;
+    const clamped = Math.min(Math.max(value, 0), clipDuration);
     setIsSeekingBySlider(true);
-    setCurrentTime(clampedValue);
-
-    seekAllVideos(nextAbsoluteTime);
-
+    setCurrentTime(clamped);
+    seekAllToOffset(clamped);
     if (onTimeUpdate) {
-      onTimeUpdate(clampedValue);
+      onTimeUpdate(clamped);
     }
-
-    // Reset seeking flag after a short delay
     setTimeout(() => setIsSeekingBySlider(false), 100);
   };
 
@@ -303,39 +280,11 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   };
 
   const handleStop = () => {
-    const referenceVideo = videoRefs.current[0];
-    const mediaStart = getMediaSliceStartTime(referenceVideo);
-
     pauseAllVideos();
-    seekAllVideos(mediaStart);
+    seekAllToOffset(0);
     setCurrentTime(0);
-
     if (onTimeUpdate) {
       onTimeUpdate(0);
-    }
-  };
-
-  const syncVideos = (index: number) => {
-    if (isSeekingBySlider) {
-      return;
-    }
-
-    const sourceVideo = videoRefs.current[index];
-    if (sourceVideo) {
-      const nextAbsoluteTime = getClampedAbsoluteTime(
-        sourceVideo,
-        sourceVideo.currentTime
-      );
-
-      videoRefs.current.forEach((video, i) => {
-        if (
-          video &&
-          i !== index &&
-          Math.abs(video.currentTime - nextAbsoluteTime) > 0.1
-        ) {
-          video.currentTime = getClampedAbsoluteTime(video, nextAbsoluteTime);
-        }
-      });
     }
   };
 
@@ -344,13 +293,12 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     e: React.SyntheticEvent<HTMLVideoElement>
   ) => {
     const video = e.currentTarget;
-    const clipDuration = getClipDuration(video);
-    const initialAbsoluteTime = getMediaSliceStartTime(video);
-
-    video.currentTime = initialAbsoluteTime;
     video.playbackRate = playbackSpeed;
-
+    seekVideoToOffset(video, index, 0);
     if (index === 0) {
+      const range = videoRanges[index] ?? referenceRange;
+      const upperBound = getVideoUpperBound(index, video.duration);
+      const clipDuration = Math.max(upperBound - range.fromTimestamp, 0);
       setDuration(clipDuration);
       setCurrentTime(0);
       if (onTimeUpdate) {
@@ -393,7 +341,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
           <Select
             value={playbackSpeed}
             onChange={handleSpeedChange}
-            options={speedOptions}
+            options={SPEED_OPTIONS}
             style={{ width: 80 }}
             size='small'
           />
@@ -405,7 +353,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     >
       <Row gutter={[16, 16]}>
         {videos.map((video, index) => (
-          <Col key={index} span={8}>
+          <Col key={`${video.url}-${index}`} span={8}>
             <div style={{ position: 'relative' }}>
               <video
                 ref={(el) => {
@@ -415,7 +363,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 controls={false}
                 style={{ width: '100%', height: 'auto' }}
                 onTimeUpdate={(e) => {
-                  handleTimeUpdate(e);
+                  handleTimeUpdate(index, e);
                   syncVideos(index);
                 }}
                 onLoadedMetadata={(e) => handleLoadedMetadata(index, e)}

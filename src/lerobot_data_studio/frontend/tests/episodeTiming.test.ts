@@ -1,71 +1,66 @@
 import { describe, expect, it } from 'vitest';
 import {
-  getEpisodeTimeRange,
-  normalizeEpisodeTimestamp,
-  normalizeIdleSpans,
+  clampToVideoRange,
+  getVideoTimeRange,
 } from '../src/utils/episodeTiming';
 
 describe('episodeTiming', () => {
-  it('returns a zero-length range for empty episode data', () => {
-    expect(getEpisodeTimeRange()).toEqual({
-      startTime: 0,
-      endTime: 0,
-      duration: 0,
+  it('returns a default range when video info is missing', () => {
+    expect(getVideoTimeRange(undefined)).toEqual({
+      fromTimestamp: 0,
+      toTimestamp: null,
+      duration: null,
     });
   });
 
-  it('derives a slice range from the first and last timestamps', () => {
+  it('uses explicit from/to timestamps when provided', () => {
     expect(
-      getEpisodeTimeRange([
-        {
-          episode_index: 7,
-          action: [0],
-          observation: [0],
-          timestamp: 12.5,
-        },
-        {
-          episode_index: 7,
-          action: [1],
-          observation: [1],
-          timestamp: 18.75,
-        },
-      ])
+      getVideoTimeRange({
+        url: '/api/videos/foo.mp4',
+        filename: 'foo.mp4',
+        from_timestamp: 12.5,
+        to_timestamp: 18.75,
+      })
     ).toEqual({
-      startTime: 12.5,
-      endTime: 18.75,
+      fromTimestamp: 12.5,
+      toTimestamp: 18.75,
       duration: 6.25,
     });
   });
 
-  it('normalizes timestamps relative to the episode slice start', () => {
-    expect(normalizeEpisodeTimestamp(18.75, 12.5)).toBe(6.25);
-    expect(normalizeEpisodeTimestamp(10, 12.5)).toBe(0);
+  it('treats null bounds as missing', () => {
+    expect(
+      getVideoTimeRange({
+        url: '/api/videos/foo.mp4',
+        filename: 'foo.mp4',
+        from_timestamp: null,
+        to_timestamp: null,
+      })
+    ).toEqual({
+      fromTimestamp: 0,
+      toTimestamp: null,
+      duration: null,
+    });
   });
 
-  it('normalizes idle spans into slice-relative times', () => {
-    expect(
-      normalizeIdleSpans(
-        [
-          {
-            start_time: 12.5,
-            end_time: 13.5,
-          },
-          {
-            start_time: 17.5,
-            end_time: 18.75,
-          },
-        ],
-        12.5
-      )
-    ).toEqual([
-      {
-        start_time: 0,
-        end_time: 1,
-      },
-      {
-        start_time: 5,
-        end_time: 6.25,
-      },
-    ]);
+  it('clamps absolute times into the video slice window', () => {
+    const range = {
+      fromTimestamp: 12.5,
+      toTimestamp: 18.75,
+      duration: 6.25,
+    };
+    expect(clampToVideoRange(10, range, 30)).toBe(12.5);
+    expect(clampToVideoRange(20, range, 30)).toBe(18.75);
+    expect(clampToVideoRange(15, range, 30)).toBe(15);
+  });
+
+  it('falls back to media duration when no upper bound is set', () => {
+    const range = {
+      fromTimestamp: 0,
+      toTimestamp: null,
+      duration: null,
+    };
+    expect(clampToVideoRange(20, range, 12)).toBe(12);
+    expect(clampToVideoRange(5, range, 12)).toBe(5);
   });
 });

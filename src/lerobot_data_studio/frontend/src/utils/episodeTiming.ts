@@ -1,59 +1,43 @@
-import { EpisodeDataPoint, IdleSpan } from '@/types';
+import { VideoInfo } from '@/types';
 
-export interface EpisodeTimeRange {
-  startTime: number;
-  endTime: number;
-  duration: number;
+export interface VideoTimeRange {
+  fromTimestamp: number;
+  toTimestamp: number | null;
+  duration: number | null;
 }
 
-export const getEpisodeTimeRange = (
-  episodeData: EpisodeDataPoint[] = []
-): EpisodeTimeRange => {
-  if (episodeData.length === 0) {
-    return {
-      startTime: 0,
-      endTime: 0,
-      duration: 0,
-    };
-  }
+export const getVideoTimeRange = (
+  video: VideoInfo | undefined
+): VideoTimeRange => {
+  const rawFrom =
+    video?.from_timestamp != null && Number.isFinite(video.from_timestamp)
+      ? Number(video.from_timestamp)
+      : 0;
+  const fromTimestamp = Math.max(rawFrom, 0);
 
-  const rawStartTime = Number(episodeData[0]?.timestamp ?? 0);
-  const rawEndTime = Number(
-    episodeData[episodeData.length - 1]?.timestamp ?? rawStartTime
-  );
-
-  const startTime = Number.isFinite(rawStartTime) ? rawStartTime : 0;
-  const endTime = Math.max(
-    Number.isFinite(rawEndTime) ? rawEndTime : startTime,
-    startTime
-  );
+  const rawTo =
+    video?.to_timestamp != null && Number.isFinite(video.to_timestamp)
+      ? Number(video.to_timestamp)
+      : null;
+  const toTimestamp = rawTo != null ? Math.max(rawTo, fromTimestamp) : null;
 
   return {
-    startTime,
-    endTime,
-    duration: Math.max(endTime - startTime, 0),
+    fromTimestamp,
+    toTimestamp,
+    duration: toTimestamp != null ? toTimestamp - fromTimestamp : null,
   };
 };
 
-export const normalizeEpisodeTimestamp = (
-  timestamp: number,
-  startTime: number
+export const clampToVideoRange = (
+  absoluteTime: number,
+  range: VideoTimeRange,
+  videoDuration: number
 ): number => {
-  const safeTimestamp = Number.isFinite(timestamp) ? timestamp : startTime;
-  return Math.max(safeTimestamp - startTime, 0);
-};
-
-export const normalizeIdleSpans = (
-  spans: IdleSpan[],
-  startTime: number
-): IdleSpan[] => {
-  return spans.map((span) => {
-    const normalizedStart = normalizeEpisodeTimestamp(span.start_time, startTime);
-    const normalizedEnd = normalizeEpisodeTimestamp(span.end_time, startTime);
-
-    return {
-      start_time: normalizedStart,
-      end_time: Math.max(normalizedEnd, normalizedStart),
-    };
-  });
+  const { fromTimestamp, toTimestamp } = range;
+  const upperBound =
+    toTimestamp != null
+      ? Math.min(toTimestamp, videoDuration || toTimestamp)
+      : videoDuration || fromTimestamp;
+  const lowerBound = Math.min(fromTimestamp, upperBound);
+  return Math.max(Math.min(absoluteTime, upperBound), lowerBound);
 };

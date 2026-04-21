@@ -26,13 +26,44 @@ from .models import (
     DatasetValidationResponse,
     EpisodeData,
     IdleAnalysisResponse,
+    SaveSubtaskAnnotationsRequest,
+    SubtaskAnnotationsResponse,
+    SubtaskAnnotationsSummaryResponse,
+    SubtaskTaskListResponse,
     VideoInfo,
 )
 from .state_store import StateStore, get_state_store
+from .subtask_annotations import (
+    build_summary,
+    load_skills_json,
+    save_episode_annotations,
+)
+from .subtask_config import get_subtask_task_list
 from .utils import get_episode_data
 
 init_logging()
 logger = logging.getLogger(__name__)
+
+
+def _maybe_scalar(value):
+    """Coerce a metadata cell into a plain float, handling list/np-scalar wrappers.
+
+    LeRobot v3 stores per-video timestamps inside the episodes parquet, where each
+    cell can come back as a length-1 list (or numpy scalar) depending on how it's
+    accessed. Older v2 datasets simply omit the keys entirely.
+    """
+    if value is None:
+        return None
+    try:
+        if hasattr(value, "tolist"):
+            value = value.tolist()
+        if isinstance(value, (list, tuple)):
+            if not value:
+                return None
+            value = value[0]
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def check_repo_id(repo_id: str) -> None:
@@ -185,14 +216,20 @@ async def get_episode(
         version=str(getattr(dataset.meta, "version", getattr(dataset.meta, "_version", None))),
     )
 
-    video_paths = [dataset.meta.get_video_file_path(episode_id, key) for key in dataset.meta.video_keys]
-    videos_info = [
-        VideoInfo(
-            url=f"/api/videos/{repo_id}/{str(video_path)}",
-            filename=f"{video_path.parent.parent.name} ({video_path.parent.name})",
+    episode_meta = dataset.meta.episodes[episode_id]
+    videos_info: list[VideoInfo] = []
+    for video_key in dataset.meta.video_keys:
+        video_path = dataset.meta.get_video_file_path(episode_id, video_key)
+        from_timestamp = _maybe_scalar(episode_meta.get(f"videos/{video_key}/from_timestamp"))
+        to_timestamp = _maybe_scalar(episode_meta.get(f"videos/{video_key}/to_timestamp"))
+        videos_info.append(
+            VideoInfo(
+                url=f"/api/videos/{repo_id}/{str(video_path)}",
+                filename=f"{video_path.parent.parent.name} ({video_path.parent.name})",
+                from_timestamp=from_timestamp,
+                to_timestamp=to_timestamp,
+            )
         )
-        for video_path in video_paths
-    ]
     tasks = dataset.meta.episodes[episode_id]["tasks"]
 
     if videos_info:
@@ -243,6 +280,100 @@ async def get_episode_idle_analysis(
         raise HTTPException(status_code=404, detail=f"Episode {episode_id} not found")
 
     return analyze_idle_time(dataset, episode_id, threshold=threshold, min_duration=min_duration)
+
+
+@app.get("/api/subtasks/tasks", response_model=SubtaskTaskListResponse)
+async def get_subtask_tasks():
+    """Return the configured subtask names that drive the radio selector."""
+    return SubtaskTaskListResponse(tasks=get_subtask_task_list())
+
+
+@app.get(
+    "/api/datasets/{dataset_namespace}/{dataset_name}/subtasks",
+    response_model=SubtaskAnnotationsResponse,
+)
+async def get_subtask_annotations(
+    dataset_namespace: str,
+    dataset_name: str,
+    state_store: StateStore = Depends(get_state_store),
+):
+    """Return the full `meta/skills.json` payload for a dataset (or empty)."""
+    repo_id = f"{dataset_namespace}/{dataset_name}"
+
+    if not state_store.is_dataset_cached(repo_id):
+        raise HTTPException(
+            status_code=http_status.HTTP_202_ACCEPTED,
+            detail="Dataset is not loaded. Please load it first.",
+        )
+
+    dataset = state_store.get_dataset(repo_id)
+    if not dataset:
+        raise HTTPException(status_code=404, detail=f"Dataset {repo_id} not found")
+
+    return load_skills_json(dataset)
+
+
+@app.get(
+    "/api/datasets/{dataset_namespace}/{dataset_name}/subtasks/summary",
+    response_model=SubtaskAnnotationsSummaryResponse,
+)
+async def get_subtask_annotations_summary(
+    dataset_namespace: str,
+    dataset_name: str,
+    state_store: StateStore = Depends(get_state_store),
+):
+    """Return per-episode annotation status used by the sidebar badges."""
+    repo_id = f"{dataset_namespace}/{dataset_name}"
+
+    if not state_store.is_dataset_cached(repo_id):
+        raise HTTPException(
+            status_code=http_status.HTTP_202_ACCEPTED,
+            detail="Dataset is not loaded. Please load it first.",
+        )
+
+    dataset = state_store.get_dataset(repo_id)
+    if not dataset:
+        raise HTTPException(status_code=404, detail=f"Dataset {repo_id} not found")
+
+    return build_summary(dataset)
+
+
+@app.put(
+    "/api/datasets/{dataset_namespace}/{dataset_name}/episodes/{episode_id}/subtasks",
+    response_model=SubtaskAnnotationsResponse,
+)
+async def save_subtask_annotations(
+    dataset_namespace: str,
+    dataset_name: str,
+    episode_id: int,
+    request: SaveSubtaskAnnotationsRequest,
+    state_store: StateStore = Depends(get_state_store),
+):
+    """Persist subtask segments for an episode, rewriting skills.json + subtasks.parquet."""
+    repo_id = f"{dataset_namespace}/{dataset_name}"
+
+    if not state_store.is_dataset_cached(repo_id):
+        raise HTTPException(
+            status_code=http_status.HTTP_202_ACCEPTED,
+            detail="Dataset is not loaded. Please load it first.",
+        )
+
+    dataset = state_store.get_dataset(repo_id)
+    if not dataset:
+        raise HTTPException(status_code=404, detail=f"Dataset {repo_id} not found")
+
+    if episode_id < 0 or episode_id >= dataset.num_episodes:
+        raise HTTPException(status_code=404, detail=f"Episode {episode_id} not found")
+
+    allowed_names = get_subtask_task_list()
+    payload, _, _ = save_episode_annotations(
+        dataset=dataset,
+        episode_index=episode_id,
+        description=request.description,
+        skills=request.skills,
+        allowed_names=allowed_names,
+    )
+    return payload
 
 
 @app.get("/api/videos/{dataset_namespace}/{dataset_name}/{video_path:path}")

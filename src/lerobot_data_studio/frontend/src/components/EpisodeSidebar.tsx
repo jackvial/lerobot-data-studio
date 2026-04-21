@@ -4,10 +4,13 @@ import {
   Checkbox,
   Button,
   Space,
+  Tag,
+  Tooltip,
   Typography,
   Input,
 } from 'antd';
 import { CheckCircleOutlined, CloseCircleOutlined } from '@ant-design/icons';
+import { EpisodeSubtaskSummary } from '@/types';
 
 const { Title, Text } = Typography;
 const { Search } = Input;
@@ -20,6 +23,7 @@ interface EpisodeSidebarProps {
   onSelectAll: () => void;
   onClearSelection: () => void;
   onEpisodeClick: (episodeId: number) => void;
+  annotationSummary?: Record<number, EpisodeSubtaskSummary>;
 }
 
 const EpisodeSidebar: React.FC<EpisodeSidebarProps> = ({
@@ -30,6 +34,7 @@ const EpisodeSidebar: React.FC<EpisodeSidebarProps> = ({
   onSelectAll,
   onClearSelection,
   onEpisodeClick,
+  annotationSummary,
 }) => {
   const [searchTerm, setSearchTerm] = React.useState('');
 
@@ -93,6 +98,7 @@ const EpisodeSidebar: React.FC<EpisodeSidebarProps> = ({
           dataSource={filteredEpisodes}
           renderItem={(episodeId) => {
             const isCurrentEpisode = episodeId === currentEpisodeId;
+            const summary = annotationSummary?.[episodeId];
 
             return (
               <List.Item
@@ -149,6 +155,26 @@ const EpisodeSidebar: React.FC<EpisodeSidebarProps> = ({
                   >
                     Episode {episodeId}
                   </Text>
+                  {summary?.has_annotations && (
+                    <Tooltip
+                      title={`${summary.segment_count} subtask segment${
+                        summary.segment_count === 1 ? '' : 's'
+                      }`}
+                    >
+                      <Tag
+                        color='blue'
+                        style={{
+                          marginLeft: 'auto',
+                          marginRight: 0,
+                          fontSize: '11px',
+                          lineHeight: '16px',
+                          padding: '0 6px',
+                        }}
+                      >
+                        {summary.segment_count}
+                      </Tag>
+                    </Tooltip>
+                  )}
                 </div>
               </List.Item>
             );
