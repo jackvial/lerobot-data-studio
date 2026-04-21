@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Layout,
@@ -30,6 +30,10 @@ import EpisodeIndexDisplay from './EpisodeIndexDisplay';
 import EpisodeNavigation from './EpisodeNavigation';
 import DatasetCompletionModal from './DatasetCompletionModal';
 import { createDatasetRequest } from '@/utils/createDataset';
+import {
+  getEpisodeTimeRange,
+  normalizeIdleSpans,
+} from '@/utils/episodeTiming';
 
 const { Header, Content, Sider } = Layout;
 const { Title, Text } = Typography;
@@ -229,9 +233,21 @@ const DatasetViewer: React.FC = () => {
     getVideoUrl
   );
 
+  const episodeTimeRange = useMemo(() => {
+    return getEpisodeTimeRange(episodeData?.episode_data ?? []);
+  }, [episodeData?.episode_data]);
+
+  const normalizedIdleSpans = useMemo(() => {
+    return normalizeIdleSpans(idleAnalysis?.spans ?? [], episodeTimeRange.startTime);
+  }, [episodeTimeRange.startTime, idleAnalysis?.spans]);
+
   const handleEpisodeChange = (newEpisodeId: number) => {
     setCurrentEpisodeId(newEpisodeId);
   };
+
+  useEffect(() => {
+    setCurrentVideoTime(0);
+  }, [currentEpisodeId]);
 
   // Update URL when episode changes
   useEffect(() => {
@@ -475,21 +491,14 @@ const DatasetViewer: React.FC = () => {
                 videos={episodeData.videos_info}
                 episodeId={currentEpisodeId}
                 onTimeUpdate={setCurrentVideoTime}
+                sliceStartTime={episodeTimeRange.startTime}
+                sliceEndTime={episodeTimeRange.endTime}
               />
 
               <IdleTimeline
-                spans={idleAnalysis?.spans ?? []}
+                spans={normalizedIdleSpans}
                 episodeDuration={
-                  idleAnalysis?.episode_duration ??
-                  (episodeData.episode_data.length > 0
-                    ? Number(
-                        (
-                          episodeData.episode_data[
-                            episodeData.episode_data.length - 1
-                          ] as any
-                        ).timestamp ?? 0
-                      )
-                    : 0)
+                  idleAnalysis?.episode_duration ?? episodeTimeRange.duration
                 }
                 totalIdleSeconds={idleAnalysis?.total_idle_seconds ?? 0}
                 currentTime={currentVideoTime}
@@ -504,6 +513,7 @@ const DatasetViewer: React.FC = () => {
                 episodeData={episodeData.episode_data}
                 featureNames={episodeData.feature_names}
                 currentTime={currentVideoTime}
+                timeOffset={episodeTimeRange.startTime}
               />
             </Space>
           ) : null}

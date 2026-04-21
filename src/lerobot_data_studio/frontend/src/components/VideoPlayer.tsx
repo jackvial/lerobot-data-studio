@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Card,
   Row,
@@ -10,23 +10,24 @@ import {
   Select,
 } from 'antd';
 import { PlayCircleOutlined, PauseCircleOutlined } from '@ant-design/icons';
+import { VideoInfo } from '@/types';
 
-interface VideoInfo {
-  url: string;
-  filename: string;
-  language_instruction?: string[];
-}
+const CLIP_TOLERANCE_SECONDS = 0.25;
 
 interface VideoPlayerProps {
   videos: VideoInfo[];
   episodeId: number;
   onTimeUpdate?: (time: number) => void;
+  sliceStartTime?: number;
+  sliceEndTime?: number;
 }
 
 const VideoPlayer: React.FC<VideoPlayerProps> = ({
   videos,
   episodeId,
   onTimeUpdate,
+  sliceStartTime = 0,
+  sliceEndTime,
 }) => {
   const videoRefs = useRef<(HTMLVideoElement | null)[]>([]);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -34,6 +35,9 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [duration, setDuration] = useState(0);
   const [isSeekingBySlider, setIsSeekingBySlider] = useState(false);
   const [playbackSpeed, setPlaybackSpeed] = useState(3.0); // Default to 3x speed
+  const clipStartTime = Math.max(sliceStartTime, 0);
+  const expectedClipDuration =
+    sliceEndTime !== undefined ? Math.max(sliceEndTime - clipStartTime, 0) : undefined;
 
   // Speed options from 0.5x to 3x in 0.5x increments
   const speedOptions = [
@@ -48,26 +52,16 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   useEffect(() => {
     // Reset refs when videos change
     videoRefs.current = videoRefs.current.slice(0, videos.length);
-  }, [videos]);
+  }, [videos.length]);
 
-  // Set duration when first video loads and apply initial speed
   useEffect(() => {
-    const checkDuration = () => {
-      const firstVideo = videoRefs.current[0];
-      if (firstVideo && firstVideo.duration) {
-        setDuration(firstVideo.duration);
-        // Apply initial playback speed
-        videoRefs.current.forEach((video) => {
-          if (video) {
-            video.playbackRate = playbackSpeed;
-          }
-        });
-      }
-    };
-
-    const interval = setInterval(checkDuration, 100);
-    return () => clearInterval(interval);
-  }, [videos, playbackSpeed]);
+    setIsPlaying(false);
+    setIsSeekingBySlider(false);
+    setCurrentTime(0);
+    setDuration(
+      sliceEndTime !== undefined ? Math.max(sliceEndTime - clipStartTime, 0) : 0
+    );
+  }, [episodeId, videos.length, clipStartTime, sliceEndTime]);
 
   // Update playback speed when changed
   useEffect(() => {
@@ -77,6 +71,163 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
       }
     });
   }, [playbackSpeed]);
+
+  const getMediaSliceStartTime = useCallback(
+    (video: HTMLVideoElement | null): number => {
+      const hasFullVideoDuration =
+        video !== null &&
+        Number.isFinite(video.duration) &&
+        video.duration > 0 &&
+        sliceEndTime !== undefined &&
+        video.duration >= sliceEndTime - CLIP_TOLERANCE_SECONDS;
+
+      if (hasFullVideoDuration) {
+        return clipStartTime;
+      }
+
+      return 0;
+    },
+    [clipStartTime, sliceEndTime]
+  );
+
+  const getVideoEndTime = useCallback(
+    (video: HTMLVideoElement | null): number => {
+      const hasLoadedDuration =
+        video !== null && Number.isFinite(video.duration) && video.duration > 0;
+      const mediaStart = getMediaSliceStartTime(video);
+
+      if (!hasLoadedDuration) {
+        if (expectedClipDuration !== undefined) {
+          return mediaStart + expectedClipDuration;
+        }
+
+        return mediaStart;
+      }
+
+      if (sliceEndTime !== undefined) {
+        if (mediaStart === 0) {
+          return Math.min(expectedClipDuration ?? video.duration, video.duration);
+        }
+
+        return Math.max(Math.min(sliceEndTime, video.duration), mediaStart);
+      }
+
+      return video.duration;
+    },
+    [expectedClipDuration, getMediaSliceStartTime, sliceEndTime]
+  );
+
+  const getClipDuration = useCallback(
+    (video: HTMLVideoElement | null): number => {
+      return Math.max(getVideoEndTime(video) - getMediaSliceStartTime(video), 0);
+    },
+    [getMediaSliceStartTime, getVideoEndTime]
+  );
+
+  const getClampedAbsoluteTime = useCallback(
+    (video: HTMLVideoElement | null, nextAbsoluteTime: number): number => {
+      const mediaStart = getMediaSliceStartTime(video);
+      const clampedStart = Math.max(nextAbsoluteTime, mediaStart);
+      const clipEnd = getVideoEndTime(video);
+
+      if (clipEnd <= mediaStart) {
+        return mediaStart;
+      }
+
+      return Math.min(clampedStart, clipEnd);
+    },
+    [getMediaSliceStartTime, getVideoEndTime]
+  );
+
+  const updateDisplayedTime = useCallback(
+    (
+      video: HTMLVideoElement | null,
+      nextAbsoluteTime: number,
+      nextDuration?: number
+    ) => {
+      const nextCurrentTime = Math.max(
+        nextAbsoluteTime - getMediaSliceStartTime(video),
+        0
+      );
+      setCurrentTime(nextCurrentTime);
+
+      if (nextDuration !== undefined) {
+        setDuration(nextDuration);
+      }
+
+      if (onTimeUpdate) {
+        onTimeUpdate(nextCurrentTime);
+      }
+    },
+    [getMediaSliceStartTime, onTimeUpdate]
+  );
+
+  const pauseAllVideos = useCallback(() => {
+    videoRefs.current.forEach((video) => {
+      if (video) {
+        video.pause();
+      }
+    });
+    setIsPlaying(false);
+  }, []);
+
+  const seekAllVideos = useCallback(
+    (nextAbsoluteTime: number) => {
+      videoRefs.current.forEach((video) => {
+        if (video) {
+          video.currentTime = getClampedAbsoluteTime(video, nextAbsoluteTime);
+        }
+      });
+    },
+    [getClampedAbsoluteTime]
+  );
+
+  const togglePlayback = useCallback(() => {
+    const allVideos = videoRefs.current.filter(
+      (video): video is HTMLVideoElement => video !== null
+    );
+    const firstVideo = allVideos[0];
+
+    if (!firstVideo) {
+      return;
+    }
+
+    if (isPlaying) {
+      pauseAllVideos();
+      return;
+    }
+
+    const clipDuration = getClipDuration(firstVideo);
+    if (clipDuration <= 0) {
+      const mediaStart = getMediaSliceStartTime(firstVideo);
+      seekAllVideos(mediaStart);
+      updateDisplayedTime(firstVideo, mediaStart, clipDuration);
+      return;
+    }
+
+    const mediaStart = getMediaSliceStartTime(firstVideo);
+    const clipEnd = getVideoEndTime(firstVideo);
+    const shouldRestartFromSliceStart =
+      firstVideo.currentTime < mediaStart || firstVideo.currentTime >= clipEnd;
+
+    if (shouldRestartFromSliceStart) {
+      seekAllVideos(mediaStart);
+      updateDisplayedTime(firstVideo, mediaStart, clipDuration);
+    }
+
+    allVideos.forEach((video) => {
+      void video.play();
+    });
+    setIsPlaying(true);
+  }, [
+    getClipDuration,
+    getMediaSliceStartTime,
+    getVideoEndTime,
+    isPlaying,
+    pauseAllVideos,
+    seekAllVideos,
+    updateDisplayedTime,
+  ]);
 
   // Add keyboard event handler for spacebar
   useEffect(() => {
@@ -90,49 +241,57 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
       // Spacebar key
       if (e.code === 'Space' || e.key === ' ') {
         e.preventDefault(); // Prevent page scroll
-
-        // Inline play/pause logic to avoid dependency issues
-        const allVideos = videoRefs.current.filter((v) => v !== null);
-        const firstVideo = allVideos[0];
-
-        if (firstVideo && !firstVideo.paused) {
-          allVideos.forEach((video) => video?.pause());
-        } else {
-          allVideos.forEach((video) => video?.play());
-        }
+        togglePlayback();
       }
     };
 
     window.addEventListener('keydown', handleKeyPress);
     return () => window.removeEventListener('keydown', handleKeyPress);
-  }, []); // Empty dependency array since we're not using external state
+  }, [togglePlayback]);
 
   const handleTimeUpdate = (e: React.SyntheticEvent<HTMLVideoElement>) => {
-    if (!isSeekingBySlider) {
-      const video = e.currentTarget;
-      setCurrentTime(video.currentTime);
-      if (video.duration && !isNaN(video.duration)) {
-        setDuration(video.duration);
-      }
-      if (onTimeUpdate) {
-        onTimeUpdate(video.currentTime);
-      }
+    if (isSeekingBySlider) {
+      return;
     }
+
+    const video = e.currentTarget;
+    const mediaStart = getMediaSliceStartTime(video);
+
+    if (video.currentTime < mediaStart) {
+      video.currentTime = mediaStart;
+    }
+
+    const clipEnd = getVideoEndTime(video);
+    const clipDuration = getClipDuration(video);
+
+    if (video.currentTime >= clipEnd) {
+      videoRefs.current.forEach((currentVideo) => {
+        if (currentVideo) {
+          currentVideo.currentTime = getClampedAbsoluteTime(currentVideo, clipEnd);
+          currentVideo.pause();
+        }
+      });
+      setIsPlaying(false);
+      updateDisplayedTime(video, clipEnd, clipDuration);
+      return;
+    }
+
+    updateDisplayedTime(video, video.currentTime, clipDuration);
   };
 
   const handleSliderChange = (value: number) => {
-    setIsSeekingBySlider(true);
-    setCurrentTime(value);
+    const referenceVideo = videoRefs.current[0];
+    const clampedValue = Math.min(Math.max(value, 0), duration);
+    const nextAbsoluteTime =
+      getMediaSliceStartTime(referenceVideo) + clampedValue;
 
-    // Update all videos
-    videoRefs.current.forEach((video) => {
-      if (video) {
-        video.currentTime = value;
-      }
-    });
+    setIsSeekingBySlider(true);
+    setCurrentTime(clampedValue);
+
+    seekAllVideos(nextAbsoluteTime);
 
     if (onTimeUpdate) {
-      onTimeUpdate(value);
+      onTimeUpdate(clampedValue);
     }
 
     // Reset seeking flag after a short delay
@@ -140,45 +299,62 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   };
 
   const handlePlayPause = () => {
-    const allVideos = videoRefs.current.filter((v) => v !== null);
-
-    if (isPlaying) {
-      allVideos.forEach((video) => video?.pause());
-      setIsPlaying(false);
-    } else {
-      allVideos.forEach((video) => video?.play());
-      setIsPlaying(true);
-    }
+    togglePlayback();
   };
 
   const handleStop = () => {
-    const allVideos = videoRefs.current.filter((v) => v !== null);
-    allVideos.forEach((video) => {
-      if (video) {
-        video.pause();
-        video.currentTime = 0;
-      }
-    });
-    setIsPlaying(false);
+    const referenceVideo = videoRefs.current[0];
+    const mediaStart = getMediaSliceStartTime(referenceVideo);
+
+    pauseAllVideos();
+    seekAllVideos(mediaStart);
     setCurrentTime(0);
+
     if (onTimeUpdate) {
       onTimeUpdate(0);
     }
   };
 
   const syncVideos = (index: number) => {
-    if (!isSeekingBySlider) {
-      const sourceVideo = videoRefs.current[index];
-      if (sourceVideo) {
-        videoRefs.current.forEach((video, i) => {
-          if (
-            video &&
-            i !== index &&
-            Math.abs(video.currentTime - sourceVideo.currentTime) > 0.1
-          ) {
-            video.currentTime = sourceVideo.currentTime;
-          }
-        });
+    if (isSeekingBySlider) {
+      return;
+    }
+
+    const sourceVideo = videoRefs.current[index];
+    if (sourceVideo) {
+      const nextAbsoluteTime = getClampedAbsoluteTime(
+        sourceVideo,
+        sourceVideo.currentTime
+      );
+
+      videoRefs.current.forEach((video, i) => {
+        if (
+          video &&
+          i !== index &&
+          Math.abs(video.currentTime - nextAbsoluteTime) > 0.1
+        ) {
+          video.currentTime = getClampedAbsoluteTime(video, nextAbsoluteTime);
+        }
+      });
+    }
+  };
+
+  const handleLoadedMetadata = (
+    index: number,
+    e: React.SyntheticEvent<HTMLVideoElement>
+  ) => {
+    const video = e.currentTarget;
+    const clipDuration = getClipDuration(video);
+    const initialAbsoluteTime = getMediaSliceStartTime(video);
+
+    video.currentTime = initialAbsoluteTime;
+    video.playbackRate = playbackSpeed;
+
+    if (index === 0) {
+      setDuration(clipDuration);
+      setCurrentTime(0);
+      if (onTimeUpdate) {
+        onTimeUpdate(0);
       }
     }
   };
@@ -242,14 +418,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                   handleTimeUpdate(e);
                   syncVideos(index);
                 }}
-                onLoadedMetadata={(e) => {
-                  const video = e.currentTarget;
-                  if (video.duration && !isNaN(video.duration)) {
-                    setDuration(video.duration);
-                  }
-                  // Apply current playback speed to newly loaded video
-                  video.playbackRate = playbackSpeed;
-                }}
+                onLoadedMetadata={(e) => handleLoadedMetadata(index, e)}
                 onPlay={() => setIsPlaying(true)}
                 onPause={() => setIsPlaying(false)}
               />
@@ -275,10 +444,11 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
       <div style={{ marginTop: '16px', padding: '0 8px' }}>
         <Slider
           min={0}
-          max={duration || 100}
+          max={duration}
           value={currentTime}
           step={0.1}
           onChange={handleSliderChange}
+          disabled={duration <= 0}
           tooltip={{
             formatter: (value) => `${(value || 0).toFixed(1)}s`,
           }}

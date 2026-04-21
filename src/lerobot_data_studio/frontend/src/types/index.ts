@@ -12,11 +12,18 @@ export interface VideoInfo {
   language_instruction?: string[];
 }
 
+export interface EpisodeDataPoint {
+  episode_index: number;
+  action: number[];
+  observation: number[];
+  timestamp: number;
+}
+
 export interface EpisodeData {
   episode_id: number;
   dataset_info: DatasetInfo;
   videos_info: VideoInfo[];
-  episode_data: Record<string, number[]>[];
+  episode_data: EpisodeDataPoint[];
   feature_names: string[];
   tasks: string[];
   actual_episode_index?: number | null;
