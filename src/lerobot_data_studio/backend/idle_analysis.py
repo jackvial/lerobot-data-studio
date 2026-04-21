@@ -13,10 +13,12 @@ logger = logging.getLogger(__name__)
 
 # Tune these to change idle-detection behavior.
 # IDLE_THRESHOLD: motion magnitude below which a frame is considered idle.
-#   The motion signal is std-normalized per feature, so values are unitless.
+#   The motion signal is std-normalized per feature then L2-norm'd, so it is
+#   unitless. Idle frames sit near 0 and "moving" frames near sqrt(D) (~2.4
+#   for a 6-DoF arm), so the meaningful slider range is roughly 0.0 - 5.0.
 #   Lower = stricter (fewer/shorter idle spans), higher = looser.
-#   Reasonable range: 0.05 - 0.30.
-IDLE_THRESHOLD = 0.30
+#   Reasonable range: 0.3 - 1.5; 0.5 is a good default for most robot arms.
+IDLE_THRESHOLD = 0.50
 
 # Minimum span duration in seconds to report as idle.
 IDLE_MIN_DURATION_SEC = 0.25

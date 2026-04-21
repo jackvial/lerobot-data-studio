@@ -1,5 +1,15 @@
 import React from 'react';
-import { Card, Empty, Tooltip, Typography } from 'antd';
+import {
+  Card,
+  Empty,
+  InputNumber,
+  Row,
+  Col,
+  Slider,
+  Space,
+  Tooltip,
+  Typography,
+} from 'antd';
 import { IdleSpan } from '@/types';
 
 const { Text } = Typography;
@@ -10,9 +20,23 @@ interface IdleTimelineProps {
   totalIdleSeconds: number;
   currentTime?: number;
   isLoading?: boolean;
+  threshold: number;
+  minDuration: number;
+  onThresholdChange: (value: number) => void;
+  onMinDurationChange: (value: number) => void;
 }
 
 const BAR_HEIGHT = 24;
+// The motion signal is std-normalized per feature then L2-norm'd, so for a
+// D-dim state vector typical "moving" frames sit near sqrt(D) (~2.4 for 6
+// DoF) and idle frames sit near 0. The slider range needs to span past the
+// motion floor to be tunable end-to-end.
+const THRESHOLD_MIN = 0.0;
+const THRESHOLD_MAX = 5.0;
+const THRESHOLD_STEP = 0.01;
+const MIN_DURATION_MIN = 0.0;
+const MIN_DURATION_MAX = 5.0;
+const MIN_DURATION_STEP = 0.05;
 
 const IdleTimeline: React.FC<IdleTimelineProps> = ({
   spans,
@@ -20,6 +44,10 @@ const IdleTimeline: React.FC<IdleTimelineProps> = ({
   totalIdleSeconds,
   currentTime,
   isLoading,
+  threshold,
+  minDuration,
+  onThresholdChange,
+  onMinDurationChange,
 }) => {
   const hasDuration = episodeDuration > 0;
   const playheadPct =
@@ -28,7 +56,7 @@ const IdleTimeline: React.FC<IdleTimelineProps> = ({
       : null;
   const idlePct = hasDuration ? (totalIdleSeconds / episodeDuration) * 100 : 0;
 
-  const renderBody = () => {
+  const renderTimeline = () => {
     if (!hasDuration) {
       return <Empty description='No timing data available' />;
     }
@@ -101,6 +129,54 @@ const IdleTimeline: React.FC<IdleTimelineProps> = ({
     );
   };
 
+  const renderControl = (
+    label: string,
+    tooltip: string,
+    value: number,
+    min: number,
+    max: number,
+    step: number,
+    onChange: (value: number) => void
+  ) => {
+    const handleChange = (next: number | null) => {
+      if (next === null || Number.isNaN(next)) {
+        return;
+      }
+      const clamped = Math.min(Math.max(next, min), max);
+      onChange(clamped);
+    };
+    return (
+      <Row gutter={8} align='middle' wrap={false}>
+        <Col flex='130px'>
+          <Tooltip title={tooltip}>
+            <Text>{label}</Text>
+          </Tooltip>
+        </Col>
+        <Col flex='auto'>
+          <Slider
+            min={min}
+            max={max}
+            step={step}
+            value={value}
+            onChange={handleChange}
+            tooltip={{ formatter: (v) => (v ?? 0).toFixed(2) }}
+          />
+        </Col>
+        <Col flex='90px'>
+          <InputNumber
+            min={min}
+            max={max}
+            step={step}
+            value={value}
+            onChange={handleChange}
+            size='small'
+            style={{ width: '100%' }}
+          />
+        </Col>
+      </Row>
+    );
+  };
+
   return (
     <Card
       size='small'
@@ -108,7 +184,29 @@ const IdleTimeline: React.FC<IdleTimelineProps> = ({
       loading={isLoading}
       styles={{ body: { padding: '12px 16px' } }}
     >
-      {renderBody()}
+      <Space direction='vertical' size='middle' style={{ width: '100%' }}>
+        {renderTimeline()}
+        <div>
+          {renderControl(
+            'Motion threshold',
+            'Smoothed, std-normalized motion magnitude below which a frame counts as idle. Typical "moving" frames sit near sqrt(D) (~2.4 for 6 DoF); push the slider toward that value to extend leading/trailing idle into actual motion.',
+            threshold,
+            THRESHOLD_MIN,
+            THRESHOLD_MAX,
+            THRESHOLD_STEP,
+            onThresholdChange
+          )}
+          {renderControl(
+            'Min duration (s)',
+            'Minimum length of a low-motion run to be reported as idle.',
+            minDuration,
+            MIN_DURATION_MIN,
+            MIN_DURATION_MAX,
+            MIN_DURATION_STEP,
+            onMinDurationChange
+          )}
+        </div>
+      </Space>
     </Card>
   );
 };

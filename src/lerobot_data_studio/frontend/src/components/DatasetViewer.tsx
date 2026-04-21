@@ -47,6 +47,8 @@ const DatasetViewer: React.FC = () => {
   const [isCreateModalVisible, setIsCreateModalVisible] = useState(false);
   const [isShortcutsModalVisible, setIsShortcutsModalVisible] = useState(false);
   const [currentVideoTime, setCurrentVideoTime] = useState(0);
+  const [idleThreshold, setIdleThreshold] = useState(0.5);
+  const [idleMinDuration, setIdleMinDuration] = useState(0.25);
   const [creationTaskId, setCreationTaskId] = useState<string | null>(null);
   const [creationStatus, setCreationStatus] = useState<any>(null);
   const [showStatusModal, setShowStatusModal] = useState(false);
@@ -122,9 +124,19 @@ const DatasetViewer: React.FC = () => {
 
   // Get idle-time analysis for current episode
   const { data: idleAnalysis, isLoading: isIdleLoading } = useQuery({
-    queryKey: ['idle', namespace, name, currentEpisodeId],
+    queryKey: [
+      'idle',
+      namespace,
+      name,
+      currentEpisodeId,
+      idleThreshold,
+      idleMinDuration,
+    ],
     queryFn: () =>
-      datasetApi.getIdleAnalysis(namespace!, name!, currentEpisodeId),
+      datasetApi.getIdleAnalysis(namespace!, name!, currentEpisodeId, {
+        threshold: idleThreshold,
+        minDuration: idleMinDuration,
+      }),
     enabled:
       !!namespace &&
       !!name &&
@@ -482,6 +494,10 @@ const DatasetViewer: React.FC = () => {
                 totalIdleSeconds={idleAnalysis?.total_idle_seconds ?? 0}
                 currentTime={currentVideoTime}
                 isLoading={isIdleLoading}
+                threshold={idleThreshold}
+                minDuration={idleMinDuration}
+                onThresholdChange={setIdleThreshold}
+                onMinDurationChange={setIdleMinDuration}
               />
 
               <DataChart
