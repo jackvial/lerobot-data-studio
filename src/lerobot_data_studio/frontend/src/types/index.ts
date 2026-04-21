@@ -55,3 +55,17 @@ export interface DatasetLoadingStatus {
   progress?: number;
   message?: string;
 }
+
+export interface IdleSpan {
+  start_time: number;
+  end_time: number;
+}
+
+export interface IdleAnalysisResponse {
+  episode_id: number;
+  spans: IdleSpan[];
+  threshold: number;
+  min_duration: number;
+  total_idle_seconds: number;
+  episode_duration: number;
+}

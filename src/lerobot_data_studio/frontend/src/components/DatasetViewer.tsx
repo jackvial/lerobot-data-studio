@@ -23,6 +23,7 @@ import { useSelectedEpisodes } from '@/hooks/useSelectedEpisodes';
 import { useVideoPreloader } from '@/hooks/useVideoPreloader';
 import VideoPlayer from './VideoPlayer';
 import DataChart from './DataChart';
+import IdleTimeline from './IdleTimeline';
 import LoadingIndicator from './LoadingIndicator';
 import EpisodeSidebar from './EpisodeSidebar';
 import EpisodeIndexDisplay from './EpisodeIndexDisplay';
@@ -117,6 +118,20 @@ const DatasetViewer: React.FC = () => {
     queryKey: ['episodes', namespace, name],
     queryFn: () => datasetApi.listEpisodes(namespace!, name!),
     enabled: !!namespace && !!name && episodeData != null,
+  });
+
+  // Get idle-time analysis for current episode
+  const { data: idleAnalysis, isLoading: isIdleLoading } = useQuery({
+    queryKey: ['idle', namespace, name, currentEpisodeId],
+    queryFn: () =>
+      datasetApi.getIdleAnalysis(namespace!, name!, currentEpisodeId),
+    enabled:
+      !!namespace &&
+      !!name &&
+      status?.status === 'ready' &&
+      episodeData != null,
+    staleTime: 5 * 60 * 1000,
+    gcTime: 10 * 60 * 1000,
   });
 
   // Poll for creation status
@@ -448,6 +463,25 @@ const DatasetViewer: React.FC = () => {
                 videos={episodeData.videos_info}
                 episodeId={currentEpisodeId}
                 onTimeUpdate={setCurrentVideoTime}
+              />
+
+              <IdleTimeline
+                spans={idleAnalysis?.spans ?? []}
+                episodeDuration={
+                  idleAnalysis?.episode_duration ??
+                  (episodeData.episode_data.length > 0
+                    ? Number(
+                        (
+                          episodeData.episode_data[
+                            episodeData.episode_data.length - 1
+                          ] as any
+                        ).timestamp ?? 0
+                      )
+                    : 0)
+                }
+                totalIdleSeconds={idleAnalysis?.total_idle_seconds ?? 0}
+                currentTime={currentVideoTime}
+                isLoading={isIdleLoading}
               />
 
               <DataChart

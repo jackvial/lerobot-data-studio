@@ -14,6 +14,7 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.utils.utils import init_logging
 
 from .background_tasks import create_dataset_task, load_dataset_task
+from .idle_analysis import analyze_idle_time
 from .models import (
     CreateDatasetRequest,
     CreateDatasetResponse,
@@ -24,6 +25,7 @@ from .models import (
     DatasetSearchResponse,
     DatasetValidationResponse,
     EpisodeData,
+    IdleAnalysisResponse,
     VideoInfo,
 )
 from .state_store import StateStore, get_state_store
@@ -206,6 +208,37 @@ async def get_episode(
         actual_episode_index=episode_data_items[0].episode_index,
         tasks=tasks,
     )
+
+
+@app.get(
+    "/api/datasets/{dataset_namespace}/{dataset_name}/episodes/{episode_id}/idle",
+    response_model=IdleAnalysisResponse,
+)
+async def get_episode_idle_analysis(
+    dataset_namespace: str,
+    dataset_name: str,
+    episode_id: int,
+    state_store: StateStore = Depends(get_state_store),
+    threshold: float = Query(0.15, description="Motion threshold below which a frame is considered idle"),
+    min_duration: float = Query(0.5, description="Minimum span duration in seconds to report as idle"),
+):
+    """Compute idle-time spans for an episode based on trajectory signal magnitudes."""
+    repo_id = f"{dataset_namespace}/{dataset_name}"
+
+    if not state_store.is_dataset_cached(repo_id):
+        raise HTTPException(
+            status_code=http_status.HTTP_202_ACCEPTED,
+            detail="Dataset is not loaded. Please load it first.",
+        )
+
+    dataset = state_store.get_dataset(repo_id)
+    if not dataset:
+        raise HTTPException(status_code=404, detail=f"Dataset {repo_id} not found")
+
+    if episode_id < 0 or episode_id >= dataset.num_episodes:
+        raise HTTPException(status_code=404, detail=f"Episode {episode_id} not found")
+
+    return analyze_idle_time(dataset, episode_id, threshold=threshold, min_duration=min_duration)
 
 
 @app.get("/api/videos/{dataset_namespace}/{dataset_name}/{video_path:path}")

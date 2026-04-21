@@ -20,6 +20,7 @@ dependencies = [
     "jsonlines>=4.0.0",
     "lerobot @ git+https://github.com/huggingface/lerobot.git@main",
     "numpy>=1.26.2",
+    "scipy>=1.11.0",
     "h5py>=3.10.0",
     "zarr>=2.17.0",
     "opencv-python>=4.9.0",

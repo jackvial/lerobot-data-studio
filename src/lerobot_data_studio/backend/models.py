@@ -77,3 +77,17 @@ class CreateTaskStatus(BaseModel):
     progress: Optional[float] = None
     message: Optional[str] = None
     new_repo_id: Optional[str] = None
+
+
+class IdleSpan(BaseModel):
+    start_time: float
+    end_time: float
+
+
+class IdleAnalysisResponse(BaseModel):
+    episode_id: int
+    spans: List[IdleSpan]
+    threshold: float
+    min_duration: float
+    total_idle_seconds: float
+    episode_duration: float

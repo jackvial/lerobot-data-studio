@@ -6,6 +6,7 @@ import {
   CreateDatasetResponse,
   DatasetLoadingStatus,
   CreateTaskStatus,
+  IdleAnalysisResponse,
 } from '@/types';
 
 const api = axios.create({
@@ -56,6 +57,27 @@ export const datasetApi = {
   ): Promise<EpisodeData> => {
     const response = await api.get<EpisodeData>(
       `/datasets/${namespace}/${name}/episodes/${episodeId}`
+    );
+    return response.data;
+  },
+
+  // Get idle-time analysis for an episode
+  getIdleAnalysis: async (
+    namespace: string,
+    name: string,
+    episodeId: number,
+    options?: { threshold?: number; minDuration?: number }
+  ): Promise<IdleAnalysisResponse> => {
+    const params: Record<string, number> = {};
+    if (options?.threshold !== undefined) {
+      params.threshold = options.threshold;
+    }
+    if (options?.minDuration !== undefined) {
+      params.min_duration = options.minDuration;
+    }
+    const response = await api.get<IdleAnalysisResponse>(
+      `/datasets/${namespace}/${name}/episodes/${episodeId}/idle`,
+      { params }
     );
     return response.data;
   },
