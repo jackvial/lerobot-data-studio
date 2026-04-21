@@ -11,6 +11,23 @@ from .models import IdleAnalysisResponse, IdleSpan
 
 logger = logging.getLogger(__name__)
 
+# Tune these to change idle-detection behavior.
+# IDLE_THRESHOLD: motion magnitude below which a frame is considered idle.
+#   The motion signal is std-normalized per feature, so values are unitless.
+#   Lower = stricter (fewer/shorter idle spans), higher = looser.
+#   Reasonable range: 0.05 - 0.30.
+IDLE_THRESHOLD = 0.30
+
+# Minimum span duration in seconds to report as idle.
+IDLE_MIN_DURATION_SEC = 0.25
+
+# Savitzky-Golay smoothing window size in seconds (will be rounded to an odd
+# number of frames at the dataset fps, with a floor of 5 frames).
+SMOOTHING_WINDOW_SEC = 0.5
+
+# Savitzky-Golay polynomial order.
+SMOOTHING_POLYORDER = 2
+
 _EPS = 1e-6
 
 
@@ -28,8 +45,8 @@ def _to_array(values) -> np.ndarray:
 def analyze_idle_time(
     dataset: LeRobotDataset,
     episode_id: int,
-    threshold: float = 0.15,
-    min_duration: float = 0.5,
+    threshold: float = IDLE_THRESHOLD,
+    min_duration: float = IDLE_MIN_DURATION_SEC,
 ) -> IdleAnalysisResponse:
     """Detect contiguous spans of low motion in an episode.
 
@@ -67,20 +84,21 @@ def analyze_idle_time(
     velocity_normalized = velocity / (feature_std + _EPS)
     motion = np.linalg.norm(velocity_normalized, axis=1)
 
-    window_target = max(int(round(0.5 * fps)), 5)
+    window_target = max(int(round(SMOOTHING_WINDOW_SEC * fps)), 5)
     if window_target % 2 == 0:
         window_target += 1
     window = min(window_target, n_frames if n_frames % 2 == 1 else n_frames - 1)
     if window < 5:
         smoothed = motion
     else:
-        polyorder = min(2, window - 1)
+        polyorder = min(SMOOTHING_POLYORDER, window - 1)
         smoothed = savgol_filter(motion, window, polyorder)
 
     idle_mask = smoothed < threshold
     labeled, num_runs = label(idle_mask)
 
     min_frames = max(int(round(min_duration * fps)), 1)
+    last_frame = n_frames - 1
     spans: list[IdleSpan] = []
     total_idle = 0.0
     for run_idx in range(1, num_runs + 1):
@@ -89,6 +107,10 @@ def analyze_idle_time(
             continue
         start_frame = int(indices[0])
         end_frame = int(indices[-1])
+        # Idle spans are only reported when they touch the first or last frame
+        # of the episode; mid-episode low-motion runs are ignored.
+        if start_frame != 0 and end_frame != last_frame:
+            continue
         start_time = float(timestamps[start_frame])
         end_time = float(timestamps[end_frame])
         spans.append(IdleSpan(start_time=start_time, end_time=end_time))

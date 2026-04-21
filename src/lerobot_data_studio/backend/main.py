@@ -14,7 +14,7 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.utils.utils import init_logging
 
 from .background_tasks import create_dataset_task, load_dataset_task
-from .idle_analysis import analyze_idle_time
+from .idle_analysis import IDLE_MIN_DURATION_SEC, IDLE_THRESHOLD, analyze_idle_time
 from .models import (
     CreateDatasetRequest,
     CreateDatasetResponse,
@@ -219,8 +219,12 @@ async def get_episode_idle_analysis(
     dataset_name: str,
     episode_id: int,
     state_store: StateStore = Depends(get_state_store),
-    threshold: float = Query(0.15, description="Motion threshold below which a frame is considered idle"),
-    min_duration: float = Query(0.5, description="Minimum span duration in seconds to report as idle"),
+    threshold: float = Query(
+        IDLE_THRESHOLD, description="Motion threshold below which a frame is considered idle"
+    ),
+    min_duration: float = Query(
+        IDLE_MIN_DURATION_SEC, description="Minimum span duration in seconds to report as idle"
+    ),
 ):
     """Compute idle-time spans for an episode based on trajectory signal magnitudes."""
     repo_id = f"{dataset_namespace}/{dataset_name}"
