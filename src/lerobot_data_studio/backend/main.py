@@ -40,9 +40,11 @@ from .subtask_annotations import (
 )
 from .subtask_config import get_subtask_task_list
 from .utils import get_episode_data
+from .video_codec import apply_video_codec_overrides
 
 init_logging()
 logger = logging.getLogger(__name__)
+apply_video_codec_overrides()
 
 
 def _maybe_scalar(value):
