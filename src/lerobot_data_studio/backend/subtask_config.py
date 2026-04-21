@@ -20,14 +20,9 @@ logger = logging.getLogger(__name__)
 # generic robotic manipulation vocabulary; users can override via the env
 # var below for project-specific lists.
 DEFAULT_SUBTASKS: List[str] = [
-    "approach",
-    "grasp",
-    "pick",
-    "transport",
-    "place",
-    "release",
-    "retract",
-    "idle",
+    "reach and grasp cube",
+    "move cube to X marker",
+    "go back to rest position",
 ]
 
 _OVERRIDE_ENV_VAR = "LEROBOT_DATA_STUDIO_SUBTASKS_PATH"
