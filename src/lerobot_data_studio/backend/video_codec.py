@@ -22,11 +22,14 @@ from __future__ import annotations
 import glob
 import logging
 import os
+import shutil
 from fractions import Fraction
 from pathlib import Path
 
 import av
+from lerobot.datasets.utils import load_episodes
 from PIL import Image
+from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
@@ -268,6 +271,129 @@ def keep_episodes_from_video_with_av(
     in_container.close()
 
 
+def copy_and_reindex_videos(
+    src_dataset,
+    dst_meta,
+    episode_mapping: dict[int, int],
+    vcodec: str | None = None,
+    pix_fmt: str = "yuv420p",
+) -> dict[int, dict]:
+    """Copy/filter videos while defaulting re-encodes to the configured codec.
+
+    Adapted from ``lerobot.datasets.dataset_tools._copy_and_reindex_videos``; the
+    behavioural change is that ``vcodec`` defaults to :data:`VIDEO_CODEC`
+    (env-configurable, default ``hevc``) instead of ``libsvtav1``.
+    """
+    if vcodec is None:
+        vcodec = VIDEO_CODEC
+
+    if src_dataset.meta.episodes is None:
+        src_dataset.meta.episodes = load_episodes(src_dataset.meta.root)
+
+    episodes_video_metadata: dict[int, dict] = {new_idx: {} for new_idx in episode_mapping.values()}
+
+    for video_key in src_dataset.meta.video_keys:
+        logging.info(f"Processing videos for {video_key}")
+
+        if dst_meta.video_path is None:
+            raise ValueError("Destination metadata has no video_path defined")
+
+        file_to_episodes: dict[tuple[int, int], list[int]] = {}
+        for old_idx in episode_mapping:
+            src_ep = src_dataset.meta.episodes[old_idx]
+            chunk_idx = src_ep[f"videos/{video_key}/chunk_index"]
+            file_idx = src_ep[f"videos/{video_key}/file_index"]
+            file_key = (chunk_idx, file_idx)
+            if file_key not in file_to_episodes:
+                file_to_episodes[file_key] = []
+            file_to_episodes[file_key].append(old_idx)
+
+        for (src_chunk_idx, src_file_idx), episodes_in_file in tqdm(
+            sorted(file_to_episodes.items()), desc=f"Processing {video_key} video files"
+        ):
+            all_episodes_in_file = [
+                ep_idx
+                for ep_idx in range(src_dataset.meta.total_episodes)
+                if src_dataset.meta.episodes[ep_idx].get(f"videos/{video_key}/chunk_index") == src_chunk_idx
+                and src_dataset.meta.episodes[ep_idx].get(f"videos/{video_key}/file_index") == src_file_idx
+            ]
+
+            episodes_to_keep_set = set(episodes_in_file)
+            all_in_file_set = set(all_episodes_in_file)
+
+            if all_in_file_set == episodes_to_keep_set:
+                assert src_dataset.meta.video_path is not None
+                src_video_path = src_dataset.root / src_dataset.meta.video_path.format(
+                    video_key=video_key, chunk_index=src_chunk_idx, file_index=src_file_idx
+                )
+                dst_video_path = dst_meta.root / dst_meta.video_path.format(
+                    video_key=video_key, chunk_index=src_chunk_idx, file_index=src_file_idx
+                )
+                dst_video_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy(src_video_path, dst_video_path)
+
+                for old_idx in episodes_in_file:
+                    new_idx = episode_mapping[old_idx]
+                    src_ep = src_dataset.meta.episodes[old_idx]
+                    episodes_video_metadata[new_idx][f"videos/{video_key}/chunk_index"] = src_chunk_idx
+                    episodes_video_metadata[new_idx][f"videos/{video_key}/file_index"] = src_file_idx
+                    episodes_video_metadata[new_idx][f"videos/{video_key}/from_timestamp"] = src_ep[
+                        f"videos/{video_key}/from_timestamp"
+                    ]
+                    episodes_video_metadata[new_idx][f"videos/{video_key}/to_timestamp"] = src_ep[
+                        f"videos/{video_key}/to_timestamp"
+                    ]
+            else:
+                sorted_keep_episodes = sorted(episodes_in_file, key=lambda x: episode_mapping[x])
+                episodes_to_keep_ranges: list[tuple[float, float]] = []
+
+                for old_idx in sorted_keep_episodes:
+                    src_ep = src_dataset.meta.episodes[old_idx]
+                    from_ts = src_ep[f"videos/{video_key}/from_timestamp"]
+                    to_ts = src_ep[f"videos/{video_key}/to_timestamp"]
+                    episodes_to_keep_ranges.append((from_ts, to_ts))
+
+                assert src_dataset.meta.video_path is not None
+                src_video_path = src_dataset.root / src_dataset.meta.video_path.format(
+                    video_key=video_key, chunk_index=src_chunk_idx, file_index=src_file_idx
+                )
+                dst_video_path = dst_meta.root / dst_meta.video_path.format(
+                    video_key=video_key, chunk_index=src_chunk_idx, file_index=src_file_idx
+                )
+                dst_video_path.parent.mkdir(parents=True, exist_ok=True)
+
+                logging.info(
+                    f"Re-encoding {video_key} (chunk {src_chunk_idx}, file {src_file_idx}) "
+                    f"with {len(episodes_to_keep_ranges)} episodes"
+                )
+                keep_episodes_from_video_with_av(
+                    src_video_path,
+                    dst_video_path,
+                    episodes_to_keep_ranges,
+                    src_dataset.meta.fps,
+                    vcodec,
+                    pix_fmt,
+                )
+
+                cumulative_ts = 0.0
+                for old_idx in sorted_keep_episodes:
+                    new_idx = episode_mapping[old_idx]
+                    src_ep = src_dataset.meta.episodes[old_idx]
+                    ep_length = src_ep["length"]
+                    ep_duration = ep_length / src_dataset.meta.fps
+
+                    episodes_video_metadata[new_idx][f"videos/{video_key}/chunk_index"] = src_chunk_idx
+                    episodes_video_metadata[new_idx][f"videos/{video_key}/file_index"] = src_file_idx
+                    episodes_video_metadata[new_idx][f"videos/{video_key}/from_timestamp"] = cumulative_ts
+                    episodes_video_metadata[new_idx][f"videos/{video_key}/to_timestamp"] = (
+                        cumulative_ts + ep_duration
+                    )
+
+                    cumulative_ts += ep_duration
+
+    return episodes_video_metadata
+
+
 _OVERRIDES_APPLIED = False
 
 
@@ -292,8 +418,9 @@ def apply_video_codec_overrides() -> None:
     # `lerobot_dataset.py` does `from .video_utils import encode_video_frames`,
     # capturing the symbol as a module-level name; rebind that too.
     _lerobot_dataset.encode_video_frames = encode_video_frames
-    # `_copy_and_reindex_videos` calls `_keep_episodes_from_video_with_av` via
-    # module-level lookup, so rebinding the attribute is sufficient.
+    # `_copy_and_reindex_videos` defaulted `vcodec` to `libsvtav1`, so patch both
+    # the caller and the lower-level helper used for the actual re-encode.
+    _dataset_tools._copy_and_reindex_videos = copy_and_reindex_videos  # noqa: SLF001
     _dataset_tools._keep_episodes_from_video_with_av = keep_episodes_from_video_with_av  # noqa: SLF001
 
     _OVERRIDES_APPLIED = True

@@ -81,8 +81,13 @@ interface SegmentWithId extends SubtaskSegment {
   id: string;
 }
 
-const segmentId = (segment: SubtaskSegment, idx: number): string =>
-  `${segment.name}-${segment.start.toFixed(4)}-${segment.end.toFixed(4)}-${idx}`;
+interface SegmentNeighbors {
+  previous: SegmentWithId | null;
+  next: SegmentWithId | null;
+}
+
+const segmentId = (_segment: SubtaskSegment, idx: number): string =>
+  `segment-${idx}`;
 
 const withIds = (segments: SubtaskSegment[]): SegmentWithId[] => {
   return segments.map((segment, idx) => ({
@@ -93,6 +98,127 @@ const withIds = (segments: SubtaskSegment[]): SegmentWithId[] => {
 
 const stripIds = (segments: SegmentWithId[]): SubtaskSegment[] =>
   segments.map(({ id: _id, ...rest }) => rest);
+
+function compareSegments(a: SubtaskSegment, b: SubtaskSegment): number {
+  if (a.start !== b.start) {
+    return a.start - b.start;
+  }
+  if (a.end !== b.end) {
+    return a.end - b.end;
+  }
+  return a.name.localeCompare(b.name);
+}
+
+function sortSegmentsByTime<T extends SubtaskSegment>(segments: T[]): T[] {
+  return [...segments].sort(compareSegments);
+}
+
+const clampTime = (time: number, min: number, max: number): number => {
+  const safeMin = Math.min(min, max);
+  const safeMax = Math.max(min, max);
+  return Math.max(safeMin, Math.min(time, safeMax));
+};
+
+const getSegmentNeighbors = (
+  segments: SegmentWithId[],
+  id: string
+): SegmentNeighbors => {
+  const sorted = sortSegmentsByTime(segments);
+  const index = sorted.findIndex((segment) => segment.id === id);
+  if (index === -1) {
+    return { previous: null, next: null };
+  }
+  return {
+    previous: index > 0 ? sorted[index - 1] : null,
+    next: index < sorted.length - 1 ? sorted[index + 1] : null,
+  };
+};
+
+const getGapBoundsAtTime = (
+  segments: SegmentWithId[],
+  time: number,
+  episodeDuration: number
+): { start: number; end: number } | null => {
+  const sorted = sortSegmentsByTime(segments);
+  const containing = sorted.find(
+    (segment) => time > segment.start && time < segment.end
+  );
+  if (containing) {
+    return null;
+  }
+
+  let start = 0;
+  let end = episodeDuration;
+
+  for (const segment of sorted) {
+    if (segment.end <= time) {
+      start = Math.max(start, segment.end);
+      continue;
+    }
+    if (segment.start >= time) {
+      end = segment.start;
+      break;
+    }
+  }
+
+  return { start, end };
+};
+
+const snapSegmentsToCoverage = (
+  segments: SegmentWithId[],
+  episodeDuration: number,
+  snapToFrame: (time: number) => number
+): SubtaskSegment[] => {
+  if (segments.length === 0) {
+    return [];
+  }
+
+  const sorted = sortSegmentsByTime(segments).map((segment) => ({
+    ...segment,
+    start: clampTime(segment.start, 0, episodeDuration),
+    end: clampTime(segment.end, 0, episodeDuration),
+  }));
+
+  sorted[0].start = 0;
+  sorted[sorted.length - 1].end = episodeDuration;
+
+  for (let index = 0; index < sorted.length - 1; index += 1) {
+    const current = sorted[index];
+    const next = sorted[index + 1];
+    if (next.start <= current.end) {
+      continue;
+    }
+
+    const midpoint = clampTime(
+      snapToFrame((current.end + next.start) / 2),
+      current.end,
+      next.start
+    );
+    current.end = midpoint;
+    next.start = midpoint;
+  }
+
+  const snappedById = new Map(
+    sorted.map(({ id, name, start, end }) => [
+      id,
+      {
+        name,
+        start: clampTime(start, 0, episodeDuration),
+        end: clampTime(end, 0, episodeDuration),
+      },
+    ])
+  );
+
+  return segments.map((segment) => {
+    return (
+      snappedById.get(segment.id) ?? {
+        name: segment.name,
+        start: segment.start,
+        end: segment.end,
+      }
+    );
+  });
+};
 
 const SubtaskAnnotationPanel: React.FC<SubtaskAnnotationPanelProps> = ({
   namespace,
@@ -143,6 +269,15 @@ const SubtaskAnnotationPanel: React.FC<SubtaskAnnotationPanelProps> = ({
     });
 
   const segmentsWithIds = useMemo(() => withIds(draft), [draft]);
+
+  useEffect(() => {
+    if (
+      activeSegmentId &&
+      !segmentsWithIds.some((segment) => segment.id === activeSegmentId)
+    ) {
+      setActiveSegmentId(null);
+    }
+  }, [activeSegmentId, segmentsWithIds]);
 
   // Pick a sensible default subtask once tasks load.
   useEffect(() => {
@@ -234,11 +369,9 @@ const SubtaskAnnotationPanel: React.FC<SubtaskAnnotationPanelProps> = ({
       const indexed = withIds(draft);
       const next = indexed.filter((segment) => segment.id !== id);
       setDraft(stripIds(next));
-      if (activeSegmentId === id) {
-        setActiveSegmentId(null);
-      }
+      setActiveSegmentId(null);
     },
-    [draft, setDraft, activeSegmentId]
+    [draft, setDraft]
   );
 
   const addSegment = useCallback(
@@ -282,34 +415,67 @@ const SubtaskAnnotationPanel: React.FC<SubtaskAnnotationPanelProps> = ({
         return;
       }
       const time = timeFromEvent(event.clientX);
+      const indexed = withIds(draft);
       if (mode.kind === 'create') {
-        const start = Math.min(mode.startTime, time);
-        const end = Math.max(mode.startTime, time);
+        const gapBounds = getGapBoundsAtTime(
+          indexed,
+          mode.startTime,
+          episodeDuration
+        );
+        if (!gapBounds) {
+          setDragPreview(null);
+          return;
+        }
+        const boundedTime = clampTime(time, gapBounds.start, gapBounds.end);
+        const start = Math.min(mode.startTime, boundedTime);
+        const end = Math.max(mode.startTime, boundedTime);
         setDragPreview({ start, end });
       } else if (mode.kind === 'move') {
-        const indexed = withIds(draft);
         const segment = indexed.find((s) => s.id === mode.segmentId);
         if (!segment) {
           return;
         }
+        const { previous, next } = getSegmentNeighbors(indexed, mode.segmentId);
         const width = segment.end - segment.start;
-        let nextStart = time - mode.offset;
-        nextStart = Math.max(0, Math.min(nextStart, episodeDuration - width));
+        const minStart = previous?.end ?? 0;
+        const maxEnd = next?.start ?? episodeDuration;
+        const maxStart = maxEnd - width;
+        if (maxStart < minStart) {
+          return;
+        }
+        let nextStart = clampTime(time - mode.offset, minStart, maxStart);
+        nextStart = clampTime(snapToFrame(nextStart), minStart, maxStart);
         const nextEnd = nextStart + width;
         updateDraftSegment(mode.segmentId, (s) => ({
           ...s,
-          start: snapToFrame(nextStart),
-          end: snapToFrame(nextEnd),
+          start: nextStart,
+          end: nextEnd,
         }));
       } else if (mode.kind === 'resize-start') {
+        const segment = indexed.find((s) => s.id === mode.segmentId);
+        if (!segment) {
+          return;
+        }
+        const { previous } = getSegmentNeighbors(indexed, mode.segmentId);
         updateDraftSegment(mode.segmentId, (s) => {
-          const nextStart = Math.min(time, s.end - MIN_SEGMENT_SECONDS);
-          return { ...s, start: Math.max(0, nextStart) };
+          const minStart = previous?.end ?? 0;
+          const maxStart = segment.end - MIN_SEGMENT_SECONDS;
+          let nextStart = clampTime(time, minStart, maxStart);
+          nextStart = clampTime(snapToFrame(nextStart), minStart, maxStart);
+          return { ...s, start: nextStart };
         });
       } else if (mode.kind === 'resize-end') {
+        const segment = indexed.find((s) => s.id === mode.segmentId);
+        if (!segment) {
+          return;
+        }
+        const { next } = getSegmentNeighbors(indexed, mode.segmentId);
         updateDraftSegment(mode.segmentId, (s) => {
-          const nextEnd = Math.max(time, s.start + MIN_SEGMENT_SECONDS);
-          return { ...s, end: Math.min(episodeDuration, nextEnd) };
+          const minEnd = segment.start + MIN_SEGMENT_SECONDS;
+          const maxEnd = next?.start ?? episodeDuration;
+          let nextEnd = clampTime(time, minEnd, maxEnd);
+          nextEnd = clampTime(snapToFrame(nextEnd), minEnd, maxEnd);
+          return { ...s, end: nextEnd };
         });
       }
     },
@@ -385,7 +551,14 @@ const SubtaskAnnotationPanel: React.FC<SubtaskAnnotationPanelProps> = ({
 
   const handleClearAll = useCallback(() => {
     setDraft([]);
+    setActiveSegmentId(null);
   }, [setDraft]);
+
+  const handleSnapFill = useCallback(() => {
+    setDraft((prev) =>
+      snapSegmentsToCoverage(withIds(prev), episodeDuration, snapToFrame)
+    );
+  }, [episodeDuration, setDraft, snapToFrame]);
 
   // Keyboard shortcuts: '['/']' set start/end at playhead, Delete removes the
   // active segment, 1-9 selects the corresponding subtask.
@@ -426,34 +599,46 @@ const SubtaskAnnotationPanel: React.FC<SubtaskAnnotationPanelProps> = ({
         const active = indexed.find((s) => s.id === activeSegmentId);
         if (event.key === '[') {
           if (active) {
-            const nextStart = Math.min(
-              playhead,
-              active.end - MIN_SEGMENT_SECONDS
-            );
+            const { previous } = getSegmentNeighbors(indexed, active.id);
+            const minStart = previous?.end ?? 0;
+            const maxStart = active.end - MIN_SEGMENT_SECONDS;
+            const nextStart = clampTime(playhead, minStart, maxStart);
             updateDraftSegment(active.id, (s) => ({
               ...s,
-              start: Math.max(0, nextStart),
+              start: nextStart,
             }));
           } else {
+            const gapBounds = getGapBoundsAtTime(indexed, playhead, episodeDuration);
+            if (!gapBounds) {
+              message.info('Playhead is already inside a segment');
+              return;
+            }
+            const start = clampTime(playhead, gapBounds.start, gapBounds.end);
+            const end = clampTime(
+              snapToFrame(start + MIN_SEGMENT_SECONDS),
+              start,
+              gapBounds.end
+            );
+            if (end - start < MIN_SEGMENT_SECONDS) {
+              message.info('No room to create a new segment at the playhead');
+              return;
+            }
             const newSegment: SubtaskSegment = {
               name: activeSubtask,
-              start: playhead,
-              end: Math.min(
-                episodeDuration,
-                playhead + MIN_SEGMENT_SECONDS
-              ),
+              start,
+              end,
             };
             addSegment(newSegment);
           }
         } else if (event.key === ']') {
           if (active) {
-            const nextEnd = Math.max(
-              playhead,
-              active.start + MIN_SEGMENT_SECONDS
-            );
+            const { next } = getSegmentNeighbors(indexed, active.id);
+            const minEnd = active.start + MIN_SEGMENT_SECONDS;
+            const maxEnd = next?.start ?? episodeDuration;
+            const nextEnd = clampTime(playhead, minEnd, maxEnd);
             updateDraftSegment(active.id, (s) => ({
               ...s,
-              end: Math.min(episodeDuration, nextEnd),
+              end: nextEnd,
             }));
           }
         }
@@ -594,7 +779,7 @@ const SubtaskAnnotationPanel: React.FC<SubtaskAnnotationPanelProps> = ({
   };
 
   const sortedSegments = useMemo(
-    () => [...segmentsWithIds].sort((a, b) => a.start - b.start),
+    () => sortSegmentsByTime(segmentsWithIds),
     [segmentsWithIds]
   );
 
@@ -617,6 +802,15 @@ const SubtaskAnnotationPanel: React.FC<SubtaskAnnotationPanelProps> = ({
               disabled={!isDirty}
             >
               Revert
+            </Button>
+          </Tooltip>
+          <Tooltip title='Expand segments to fill gaps and snap to the episode edges'>
+            <Button
+              size='small'
+              onClick={handleSnapFill}
+              disabled={draft.length === 0 || episodeDuration <= 0}
+            >
+              Snap
             </Button>
           </Tooltip>
           <Tooltip title='Remove all segments for this episode'>
@@ -689,7 +883,7 @@ const SubtaskAnnotationPanel: React.FC<SubtaskAnnotationPanelProps> = ({
               backgroundColor: '#f0f2f5',
               border: '1px solid #d9d9d9',
               borderRadius: 4,
-              overflow: 'hidden',
+              overflow: 'visible',
               cursor: activeSubtask ? 'crosshair' : 'not-allowed',
               touchAction: 'none',
               userSelect: 'none',
@@ -702,14 +896,63 @@ const SubtaskAnnotationPanel: React.FC<SubtaskAnnotationPanelProps> = ({
                 style={{
                   position: 'absolute',
                   left: `${playheadPct}%`,
-                  top: 0,
-                  bottom: 0,
+                  top: -6,
+                  bottom: -6,
                   width: 2,
-                  backgroundColor: '#1677ff',
+                  backgroundColor: '#ff4d4f',
+                  boxShadow: '0 0 0 1px rgba(255,255,255,0.9)',
                   pointerEvents: 'none',
                   transform: 'translateX(-1px)',
+                  zIndex: 5,
                 }}
-              />
+              >
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: -4,
+                    left: '50%',
+                    transform: 'translateX(-50%)',
+                    width: 0,
+                    height: 0,
+                    borderLeft: '5px solid transparent',
+                    borderRight: '5px solid transparent',
+                    borderTop: '6px solid #ff4d4f',
+                    filter: 'drop-shadow(0 0 1px rgba(255,255,255,0.9))',
+                  }}
+                />
+                <div
+                  style={{
+                    position: 'absolute',
+                    bottom: -4,
+                    left: '50%',
+                    transform: 'translateX(-50%)',
+                    width: 0,
+                    height: 0,
+                    borderLeft: '5px solid transparent',
+                    borderRight: '5px solid transparent',
+                    borderBottom: '6px solid #ff4d4f',
+                    filter: 'drop-shadow(0 0 1px rgba(255,255,255,0.9))',
+                  }}
+                />
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: -22,
+                    left: '50%',
+                    transform: 'translateX(-50%)',
+                    padding: '1px 6px',
+                    fontSize: 11,
+                    lineHeight: '14px',
+                    color: '#fff',
+                    backgroundColor: '#ff4d4f',
+                    borderRadius: 3,
+                    whiteSpace: 'nowrap',
+                    boxShadow: '0 0 0 1px rgba(255,255,255,0.9)',
+                  }}
+                >
+                  {currentTime.toFixed(2)}s
+                </div>
+              </div>
             )}
           </div>
         ) : (
@@ -718,9 +961,10 @@ const SubtaskAnnotationPanel: React.FC<SubtaskAnnotationPanelProps> = ({
 
         {sortedSegments.length === 0 ? (
           <Text type='secondary' style={{ fontSize: 12 }}>
-            Drag on the bar above to label a span. Use [ and ] to set the
-            start/end of the active span at the playhead. Press 1-9 to switch
-            subtasks; Delete removes the active segment.
+            Drag on the bar above to label a span. Segments cannot overlap. Use
+            [ and ] to set the start/end of the active span at the playhead,
+            press 1-9 to switch subtasks, Delete removes the active segment,
+            and Snap fills any remaining gaps.
           </Text>
         ) : (
           <div style={{ maxHeight: 160, overflow: 'auto' }}>
