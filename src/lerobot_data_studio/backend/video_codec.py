@@ -394,6 +394,69 @@ def copy_and_reindex_videos(
     return episodes_video_metadata
 
 
+def copy_videos_with_timestamps(
+    src_dataset,
+    dst_meta,
+    episode_mapping: dict[int, int],
+    episode_time_ranges: dict[int, tuple[float, float]],
+) -> dict[int, dict]:
+    """Copy referenced source videos unchanged and rewrite per-episode time pointers."""
+    if src_dataset.meta.episodes is None:
+        src_dataset.meta.episodes = load_episodes(src_dataset.meta.root)
+
+    episodes_video_metadata: dict[int, dict] = {new_idx: {} for new_idx in episode_mapping.values()}
+
+    for video_key in src_dataset.meta.video_keys:
+        logging.info(f"Copying videos for {video_key} without re-encoding")
+
+        if dst_meta.video_path is None:
+            raise ValueError("Destination metadata has no video_path defined")
+
+        file_to_episodes: dict[tuple[int, int], list[int]] = {}
+        for old_idx in episode_mapping:
+            src_ep = src_dataset.meta.episodes[old_idx]
+            chunk_idx = src_ep[f"videos/{video_key}/chunk_index"]
+            file_idx = src_ep[f"videos/{video_key}/file_index"]
+            file_key = (chunk_idx, file_idx)
+            if file_key not in file_to_episodes:
+                file_to_episodes[file_key] = []
+            file_to_episodes[file_key].append(old_idx)
+
+        for (src_chunk_idx, src_file_idx), episodes_in_file in tqdm(
+            sorted(file_to_episodes.items()), desc=f"Copying {video_key} video files"
+        ):
+            assert src_dataset.meta.video_path is not None
+            src_video_path = src_dataset.root / src_dataset.meta.video_path.format(
+                video_key=video_key,
+                chunk_index=src_chunk_idx,
+                file_index=src_file_idx,
+            )
+            dst_video_path = dst_meta.root / dst_meta.video_path.format(
+                video_key=video_key,
+                chunk_index=src_chunk_idx,
+                file_index=src_file_idx,
+            )
+            dst_video_path.parent.mkdir(parents=True, exist_ok=True)
+            if not dst_video_path.exists():
+                shutil.copy(src_video_path, dst_video_path)
+
+            for old_idx in episodes_in_file:
+                new_idx = episode_mapping[old_idx]
+                start_offset, end_offset = episode_time_ranges[old_idx]
+                src_ep = src_dataset.meta.episodes[old_idx]
+                source_from_timestamp = float(src_ep[f"videos/{video_key}/from_timestamp"])
+                episodes_video_metadata[new_idx][f"videos/{video_key}/chunk_index"] = src_chunk_idx
+                episodes_video_metadata[new_idx][f"videos/{video_key}/file_index"] = src_file_idx
+                episodes_video_metadata[new_idx][f"videos/{video_key}/from_timestamp"] = (
+                    source_from_timestamp + float(start_offset)
+                )
+                episodes_video_metadata[new_idx][f"videos/{video_key}/to_timestamp"] = (
+                    source_from_timestamp + float(end_offset)
+                )
+
+    return episodes_video_metadata
+
+
 _OVERRIDES_APPLIED = False
 
 

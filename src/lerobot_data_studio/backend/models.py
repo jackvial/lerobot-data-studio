@@ -44,6 +44,11 @@ class DatasetListResponse(BaseModel):
     lerobot_datasets: List[str]
 
 
+class EpisodeTrimBounds(BaseModel):
+    start_time: float
+    end_time: float
+
+
 class CreateDatasetRequest(BaseModel):
     original_repo_id: str
     new_repo_id: str
@@ -51,6 +56,8 @@ class CreateDatasetRequest(BaseModel):
 
     # Episode ID -> Task name
     episode_index_task_map: Optional[Dict[int, str]] = None
+    # Episode ID -> explicit kept time bounds inside the original episode
+    episode_index_trim_map: Optional[Dict[int, EpisodeTrimBounds]] = None
 
 
 class CreateDatasetResponse(BaseModel):

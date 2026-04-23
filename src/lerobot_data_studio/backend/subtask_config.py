@@ -20,8 +20,8 @@ logger = logging.getLogger(__name__)
 # generic robotic manipulation vocabulary; users can override via the env
 # var below for project-specific lists.
 DEFAULT_SUBTASKS: List[str] = [
-    "reach and grasp cube",
-    "move cube to X marker",
+    "move to the orange cube and pick up the cube",
+    "move to the X marker and drop the cube",
     "go back to rest position",
 ]
 
@@ -65,9 +65,7 @@ def get_subtask_task_list() -> List[str]:
 
     path = Path(override).expanduser()
     if not path.exists():
-        logger.warning(
-            "Subtask override path %s does not exist; falling back to defaults", path
-        )
+        logger.warning("Subtask override path %s does not exist; falling back to defaults", path)
         return list(DEFAULT_SUBTASKS)
 
     try:

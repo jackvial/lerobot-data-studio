@@ -11,8 +11,10 @@ import psutil
 from lerobot.datasets.dataset_tools import delete_episodes
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
-from .models import CreateTaskStatus, DatasetLoadingStatus
+from .idle_trim import trim_episodes_with_explicit_bounds
+from .models import CreateTaskStatus, DatasetLoadingStatus, EpisodeTrimBounds
 from .state_store import StateStore
+from .trimmed_dataset_export import build_trimmed_dataset_with_copied_videos
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +82,8 @@ def create_dataset_task(
     original_repo_id: str,
     new_repo_id: str,
     selected_episodes: List[int],
-    episode_index_task_map: Dict[int, str],
+    episode_index_task_map: Dict[int, str] | None,
+    episode_index_trim_map: Dict[int, EpisodeTrimBounds] | None,
     state_store: StateStore = None,
 ):
     """Background task to create filtered dataset.
@@ -110,31 +113,42 @@ def create_dataset_task(
         if not dataset:
             raise ValueError(f"Dataset {original_repo_id} not found in cache")
 
+        trim_map = episode_index_trim_map or {}
+
         state_store.set_creation_task(
             task_id,
             CreateTaskStatus(
                 task_id=task_id,
                 status="running",
                 progress=0.3,
-                message="Filtering episodes...",
+                message="Building trimmed dataset..." if trim_map else "Filtering episodes...",
                 new_repo_id=new_repo_id,
             ),
         )
 
-        # Create filtered dataset by deleting unselected episodes
-        all_episodes = list(range(dataset.meta.total_episodes))
-        episodes_to_delete = [ep for ep in all_episodes if ep not in selected_episodes]
-
-        if episodes_to_delete:
-            filtered_dataset = delete_episodes(
-                dataset, episode_indices=episodes_to_delete, repo_id=new_repo_id
+        if trim_map:
+            filtered_dataset, _reports = build_trimmed_dataset_with_copied_videos(
+                dataset,
+                new_repo_id=new_repo_id,
+                episode_indices=selected_episodes,
+                episode_trim_map=trim_map,
             )
         else:
-            # If no episodes to delete, we're keeping all episodes
-            # In this case, we need to copy the dataset with a new repo_id
-            # For now, we'll just use the original dataset
-            filtered_dataset = dataset
-            filtered_dataset.repo_id = new_repo_id
+            # Create filtered dataset by deleting unselected episodes
+            all_episodes = list(range(dataset.meta.total_episodes))
+            episodes_to_delete = [ep for ep in all_episodes if ep not in selected_episodes]
+
+            if episodes_to_delete:
+                filtered_dataset = delete_episodes(
+                    dataset, episode_indices=episodes_to_delete, repo_id=new_repo_id
+                )
+            else:
+                filtered_dataset, _reports = trim_episodes_with_explicit_bounds(
+                    dataset,
+                    new_repo_id=new_repo_id,
+                    episode_indices=selected_episodes,
+                    episode_trim_map=None,
+                )
 
         state_store.set_creation_task(
             task_id,

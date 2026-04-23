@@ -1,5 +1,6 @@
 import React from 'react';
 import {
+  Button,
   Card,
   Empty,
   InputNumber,
@@ -7,10 +8,11 @@ import {
   Col,
   Slider,
   Space,
+  Tag,
   Tooltip,
   Typography,
 } from 'antd';
-import { IdleSpan } from '@/types';
+import { EpisodeTrimBounds, IdleSpan } from '@/types';
 
 const { Text } = Typography;
 
@@ -24,6 +26,10 @@ interface IdleTimelineProps {
   minDuration: number;
   onThresholdChange: (value: number) => void;
   onMinDurationChange: (value: number) => void;
+  activeTrim?: EpisodeTrimBounds | null;
+  proposedTrim?: EpisodeTrimBounds | null;
+  onApplyTrim?: () => void;
+  onClearTrim?: () => void;
 }
 
 const BAR_HEIGHT = 24;
@@ -48,6 +54,10 @@ const IdleTimeline: React.FC<IdleTimelineProps> = ({
   minDuration,
   onThresholdChange,
   onMinDurationChange,
+  activeTrim,
+  proposedTrim,
+  onApplyTrim,
+  onClearTrim,
 }) => {
   const hasDuration = episodeDuration > 0;
   const playheadPct =
@@ -73,6 +83,21 @@ const IdleTimeline: React.FC<IdleTimelineProps> = ({
             overflow: 'hidden',
           }}
         >
+          {activeTrim && (
+            <div
+              style={{
+                position: 'absolute',
+                left: `${(activeTrim.start_time / episodeDuration) * 100}%`,
+                width: `${Math.max(((activeTrim.end_time - activeTrim.start_time) / episodeDuration) * 100, 0.4)}%`,
+                top: 1,
+                bottom: 1,
+                border: '2px solid rgba(82, 196, 26, 0.9)',
+                borderRadius: 4,
+                pointerEvents: 'none',
+                boxSizing: 'border-box',
+              }}
+            />
+          )}
           {spans.map((span, idx) => {
             const left = (span.start_time / episodeDuration) * 100;
             const width =
@@ -127,6 +152,10 @@ const IdleTimeline: React.FC<IdleTimelineProps> = ({
         </div>
       </div>
     );
+  };
+
+  const formatTrim = (trim: EpisodeTrimBounds) => {
+    return `${trim.start_time.toFixed(2)}s - ${trim.end_time.toFixed(2)}s`;
   };
 
   const renderControl = (
@@ -186,6 +215,38 @@ const IdleTimeline: React.FC<IdleTimelineProps> = ({
     >
       <Space direction='vertical' size='middle' style={{ width: '100%' }}>
         {renderTimeline()}
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            gap: 12,
+            flexWrap: 'wrap',
+            alignItems: 'center',
+          }}
+        >
+          <Space wrap>
+            <Button
+              type='primary'
+              onClick={onApplyTrim}
+              disabled={!proposedTrim || isLoading}
+            >
+              Trim idle time
+            </Button>
+            <Button onClick={onClearTrim} disabled={!activeTrim}>
+              Reset trim
+            </Button>
+          </Space>
+          {activeTrim ? (
+            <Tag color='success'>Active trim: {formatTrim(activeTrim)}</Tag>
+          ) : (
+            <Text type='secondary'>Exporting full episode</Text>
+          )}
+        </div>
+        {!activeTrim && proposedTrim && (
+          <Text type='secondary'>
+            Suggested kept window: {formatTrim(proposedTrim)}
+          </Text>
+        )}
         <div>
           {renderControl(
             'Motion threshold',

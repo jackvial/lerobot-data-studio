@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   clampToVideoRange,
+  deriveEpisodeTrimFromIdleSpans,
   getVideoTimeRange,
 } from '../src/utils/episodeTiming';
 
@@ -62,5 +63,28 @@ describe('episodeTiming', () => {
     };
     expect(clampToVideoRange(20, range, 12)).toBe(12);
     expect(clampToVideoRange(5, range, 12)).toBe(5);
+  });
+
+  it('derives a kept range from leading and trailing idle spans', () => {
+    expect(
+      deriveEpisodeTrimFromIdleSpans(
+        [
+          { start_time: 0, end_time: 0.2 },
+          { start_time: 0.8, end_time: 1.0 },
+        ],
+        [0, 0.1, 0.2, 0.3, 0.4, 0.8, 0.9, 1.0]
+      )
+    ).toEqual({
+      start_time: 0.3,
+      end_time: 0.4,
+    });
+  });
+
+  it('returns null when no leading or trailing idle trim is available', () => {
+    expect(
+      deriveEpisodeTrimFromIdleSpans([{ start_time: 0.2, end_time: 0.3 }], [
+        0, 0.1, 0.2, 0.3, 0.4, 0.5,
+      ])
+    ).toBeNull();
   });
 });

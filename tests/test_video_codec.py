@@ -94,3 +94,35 @@ def test_apply_video_codec_overrides_patches_dataset_tools_copy_helper():
     assert dataset_tools._copy_and_reindex_videos is video_codec.copy_and_reindex_videos
     assert dataset_tools._keep_episodes_from_video_with_av is video_codec.keep_episodes_from_video_with_av
     assert dataset_tools.delete_episodes.__globals__["_copy_and_reindex_videos"] is video_codec.copy_and_reindex_videos
+
+
+def test_copy_videos_with_timestamps_copies_bytes_and_rewrites_ranges(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    src_dataset, dst_meta, video_key = _make_video_dataset(tmp_path)
+
+    def fail_keep(*_args, **_kwargs):
+        raise AssertionError("re-encode helper should not be called")
+
+    monkeypatch.setattr(video_codec, "keep_episodes_from_video_with_av", fail_keep)
+
+    metadata = video_codec.copy_videos_with_timestamps(
+        src_dataset,
+        dst_meta,
+        {0: 0, 1: 1},
+        {
+            0: (0.25, 1.75),
+            1: (0.5, 2.0),
+        },
+    )
+
+    copied_path = dst_meta.root / src_dataset.meta.video_path.format(
+        video_key=video_key,
+        chunk_index=0,
+        file_index=0,
+    )
+    assert copied_path.read_bytes() == b"source-video"
+    assert metadata[0][f"videos/{video_key}/from_timestamp"] == pytest.approx(0.25)
+    assert metadata[0][f"videos/{video_key}/to_timestamp"] == pytest.approx(1.75)
+    assert metadata[1][f"videos/{video_key}/from_timestamp"] == pytest.approx(2.5)
+    assert metadata[1][f"videos/{video_key}/to_timestamp"] == pytest.approx(4.0)

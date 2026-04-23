@@ -41,6 +41,7 @@ export interface CreateDatasetRequest {
   new_repo_id: string;
   selected_episodes: number[];
   episode_index_task_map?: Record<number, string>;
+  episode_index_trim_map?: Record<number, EpisodeTrimBounds>;
   ui_custom_task_list?: string[];
 }
 
@@ -66,6 +67,11 @@ export interface DatasetLoadingStatus {
 }
 
 export interface IdleSpan {
+  start_time: number;
+  end_time: number;
+}
+
+export interface EpisodeTrimBounds {
   start_time: number;
   end_time: number;
 }

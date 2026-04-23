@@ -436,6 +436,7 @@ async def create_dataset(
         request.new_repo_id,
         request.selected_episodes,
         request.episode_index_task_map,
+        request.episode_index_trim_map,
         state_store,
     )
 

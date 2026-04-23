@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Layout,
@@ -20,6 +20,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { datasetApi } from '@/services/api';
 import { useSelectedEpisodes } from '@/hooks/useSelectedEpisodes';
+import { useEpisodeTrims } from '@/hooks/useEpisodeTrims';
 import { useVideoPreloader } from '@/hooks/useVideoPreloader';
 import VideoPlayer from './VideoPlayer';
 import DataChart from './DataChart';
@@ -31,6 +32,7 @@ import EpisodeNavigation from './EpisodeNavigation';
 import DatasetCompletionModal from './DatasetCompletionModal';
 import SubtaskAnnotationPanel from './SubtaskAnnotationPanel';
 import { createDatasetRequest } from '@/utils/createDataset';
+import { deriveEpisodeTrimFromIdleSpans } from '@/utils/episodeTiming';
 
 const { Header, Content, Sider } = Layout;
 const { Title, Text } = Typography;
@@ -65,6 +67,12 @@ const DatasetViewer: React.FC = () => {
     selectAll,
     selectedCount,
   } = useSelectedEpisodes(datasetId);
+  const {
+    getTrimForEpisode,
+    setTrimForEpisode,
+    clearTrimForEpisode,
+    getTrimMapForEpisodes,
+  } = useEpisodeTrims(datasetId);
 
   // Updated version to trigger auto-load
   const { data: status, isLoading: isStatusLoading } = useQuery({
@@ -274,6 +282,21 @@ const DatasetViewer: React.FC = () => {
     setCurrentEpisodeId(newEpisodeId);
   };
 
+  const currentEpisodeTimestamps = useMemo(() => {
+    return (episodeData?.episode_data ?? []).map((point) => Number(point.timestamp));
+  }, [episodeData?.episode_data]);
+
+  const proposedTrim = useMemo(() => {
+    return deriveEpisodeTrimFromIdleSpans(
+      idleAnalysis?.spans ?? [],
+      currentEpisodeTimestamps
+    );
+  }, [currentEpisodeTimestamps, idleAnalysis?.spans]);
+
+  const activeTrim = useMemo(() => {
+    return getTrimForEpisode(currentEpisodeId);
+  }, [currentEpisodeId, getTrimForEpisode]);
+
   useEffect(() => {
     setCurrentVideoTime(0);
   }, [currentEpisodeId]);
@@ -344,9 +367,29 @@ const DatasetViewer: React.FC = () => {
       datasetId,
       newRepoId: values.new_repo_id,
       selectedEpisodes,
+      episodeTrimMap: getTrimMapForEpisodes(selectedEpisodes),
     });
 
     await createDatasetMutation.mutateAsync(payload);
+  };
+
+  const handleApplyIdleTrim = () => {
+    if (!proposedTrim) {
+      message.info('No leading or trailing idle time detected to trim.');
+      return;
+    }
+
+    setTrimForEpisode(currentEpisodeId, proposedTrim);
+    message.success(`Idle trim applied to episode ${currentEpisodeId}.`);
+  };
+
+  const handleClearIdleTrim = () => {
+    if (!activeTrim) {
+      return;
+    }
+
+    clearTrimForEpisode(currentEpisodeId);
+    message.success(`Idle trim cleared for episode ${currentEpisodeId}.`);
   };
 
   // Show loading if we're checking status or status is loading
@@ -564,6 +607,10 @@ const DatasetViewer: React.FC = () => {
                 minDuration={idleMinDuration}
                 onThresholdChange={setIdleThreshold}
                 onMinDurationChange={setIdleMinDuration}
+                activeTrim={activeTrim}
+                proposedTrim={proposedTrim}
+                onApplyTrim={handleApplyIdleTrim}
+                onClearTrim={handleClearIdleTrim}
               />
 
               <DataChart

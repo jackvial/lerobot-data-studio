@@ -1,7 +1,10 @@
+import { EpisodeTrimBounds } from '@/types';
+
 export interface CreateDatasetParams {
   datasetId: string;
   newRepoId: string;
   selectedEpisodes: number[];
+  episodeTrimMap?: Record<number, EpisodeTrimBounds>;
 }
 
 /**
@@ -12,8 +15,8 @@ export function createDatasetRequest({
   datasetId,
   newRepoId,
   selectedEpisodes,
+  episodeTrimMap,
 }: CreateDatasetParams) {
-    
   // Validate inputs
   if (
     !datasetId ||
@@ -29,10 +32,19 @@ export function createDatasetRequest({
   }
 
 
+  const filteredTrimEntries = Object.entries(episodeTrimMap ?? {}).filter(
+    ([episodeId]) => selectedEpisodes.includes(Number(episodeId))
+  );
+
   const payload = {
     original_repo_id: datasetId,
     new_repo_id: newRepoId,
     selected_episodes: selectedEpisodes,
+    ...(filteredTrimEntries.length > 0
+      ? {
+          episode_index_trim_map: Object.fromEntries(filteredTrimEntries),
+        }
+      : {}),
   };
 
   return payload;
