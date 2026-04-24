@@ -14,6 +14,7 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from .idle_trim import trim_episodes_with_explicit_bounds
 from .models import CreateTaskStatus, DatasetLoadingStatus, EpisodeTrimBounds
 from .state_store import StateStore
+from .subtask_annotations import export_subtask_annotations, sync_subtask_metadata_from_repo
 from .trimmed_dataset_export import build_trimmed_dataset_with_copied_videos
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,7 @@ def load_dataset_task(repo_id: str, state_store: StateStore = None):
         )
 
         dataset = LeRobotDataset(repo_id)
+        sync_subtask_metadata_from_repo(dataset)
         state_store.cache_dataset(repo_id, dataset)
 
         memory_after = get_process_memory_mb()
@@ -126,6 +128,9 @@ def create_dataset_task(
             ),
         )
 
+        exported_episode_order: List[int] = []
+        keep_time_ranges: Dict[int, tuple[float, float]] = {}
+
         if trim_map:
             filtered_dataset, _reports = build_trimmed_dataset_with_copied_videos(
                 dataset,
@@ -133,6 +138,11 @@ def create_dataset_task(
                 episode_indices=selected_episodes,
                 episode_trim_map=trim_map,
             )
+            exported_episode_order = [report.episode_id for report in _reports]
+            keep_time_ranges = {
+                report.episode_id: (float(report.keep_start_time), float(report.keep_end_time))
+                for report in _reports
+            }
         else:
             # Create filtered dataset by deleting unselected episodes
             all_episodes = list(range(dataset.meta.total_episodes))
@@ -142,6 +152,7 @@ def create_dataset_task(
                 filtered_dataset = delete_episodes(
                     dataset, episode_indices=episodes_to_delete, repo_id=new_repo_id
                 )
+                exported_episode_order = sorted(selected_episodes)
             else:
                 filtered_dataset, _reports = trim_episodes_with_explicit_bounds(
                     dataset,
@@ -149,6 +160,18 @@ def create_dataset_task(
                     episode_indices=selected_episodes,
                     episode_trim_map=None,
                 )
+                exported_episode_order = [report.episode_id for report in _reports]
+
+        episode_mapping = {
+            old_episode_id: new_episode_id
+            for new_episode_id, old_episode_id in enumerate(exported_episode_order)
+        }
+        export_subtask_annotations(
+            source_dataset=dataset,
+            destination_dataset=filtered_dataset,
+            episode_mapping=episode_mapping,
+            keep_time_ranges=keep_time_ranges or None,
+        )
 
         state_store.set_creation_task(
             task_id,

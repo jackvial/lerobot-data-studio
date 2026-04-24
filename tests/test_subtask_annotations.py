@@ -18,10 +18,12 @@ from lerobot_data_studio.backend.subtask_annotations import (
     SKILLS_FILENAME,
     SUBTASKS_FILENAME,
     build_summary,
+    export_subtask_annotations,
     get_episode_duration,
     load_skills_json,
     normalize_segments,
     save_episode_annotations,
+    sync_subtask_metadata_from_repo,
 )
 
 
@@ -60,6 +62,14 @@ def _make_dataset(tmp_path: Path) -> Any:
         meta=SimpleNamespace(episodes=episodes),
         hf_dataset=_FakeHfDataset(frames),
         num_episodes=2,
+    )
+
+
+def _make_destination_dataset(tmp_path: Path) -> Any:
+    return SimpleNamespace(
+        root=tmp_path,
+        repo_id="namespace/destination",
+        meta=SimpleNamespace(subtasks=None),
     )
 
 
@@ -202,3 +212,103 @@ def test_summary_reflects_saved_episodes(tmp_path: Path):
     assert set(summary.episodes.keys()) == {1}
     assert summary.episodes[1].has_annotations is True
     assert summary.episodes[1].segment_count == 2
+
+
+def test_export_subtask_annotations_reindexes_and_trims_segments(tmp_path: Path):
+    source = _make_dataset(tmp_path / "source")
+    destination = _make_destination_dataset(tmp_path / "destination")
+
+    save_episode_annotations(
+        dataset=source,
+        episode_index=0,
+        description="episode zero",
+        skills=[
+            SubtaskSegment(name="pick", start=0.0, end=0.2),
+            SubtaskSegment(name="place", start=0.2, end=0.4),
+        ],
+        allowed_names=["pick", "place"],
+    )
+    save_episode_annotations(
+        dataset=source,
+        episode_index=1,
+        description="episode one",
+        skills=[
+            SubtaskSegment(name="pick", start=0.1, end=0.9),
+        ],
+        allowed_names=["pick", "place"],
+    )
+
+    exported = export_subtask_annotations(
+        source_dataset=source,
+        destination_dataset=destination,
+        episode_mapping={1: 0, 0: 1},
+        keep_time_ranges={
+            0: (0.1, 0.3),
+            1: (10.2, 10.8),
+        },
+    )
+
+    assert exported is not None
+    assert exported.coarse_description == "pick the screwdriver"
+    assert exported.skill_to_subtask_index == {"pick": 0, "place": 1}
+    assert set(exported.episodes.keys()) == {"0", "1"}
+    assert exported.episodes["0"].episode_index == 0
+    assert exported.episodes["0"].description == "episode one"
+    assert len(exported.episodes["0"].skills) == 1
+    assert exported.episodes["0"].skills[0].name == "pick"
+    assert exported.episodes["0"].skills[0].start == pytest.approx(0.0)
+    assert exported.episodes["0"].skills[0].end == pytest.approx(0.6)
+    assert exported.episodes["1"].episode_index == 1
+    assert exported.episodes["1"].description == "episode zero"
+    assert [skill.name for skill in exported.episodes["1"].skills] == ["pick", "place"]
+    assert exported.episodes["1"].skills[0].start == pytest.approx(0.0)
+    assert exported.episodes["1"].skills[0].end == pytest.approx(0.1)
+    assert exported.episodes["1"].skills[1].start == pytest.approx(0.1)
+    assert exported.episodes["1"].skills[1].end == pytest.approx(0.2)
+
+    written = load_skills_json(destination)
+    assert written == exported
+
+    df = pd.read_parquet(destination.root / "meta" / SUBTASKS_FILENAME)
+    assert df.index.tolist() == ["pick", "place"]
+    assert df["subtask_index"].tolist() == [0, 1]
+
+
+def test_sync_subtask_metadata_from_repo_fetches_missing_optional_files(tmp_path: Path):
+    dataset = _make_destination_dataset(tmp_path / "dataset")
+    dataset.root.mkdir(parents=True, exist_ok=True)
+
+    def pull_from_repo(*, allow_patterns):
+        assert sorted(allow_patterns) == [
+            f"meta/{SKILLS_FILENAME}",
+            f"meta/{SUBTASKS_FILENAME}",
+        ]
+        meta_dir = dataset.root / "meta"
+        meta_dir.mkdir(parents=True, exist_ok=True)
+        (meta_dir / SKILLS_FILENAME).write_text(
+            json.dumps(
+                {
+                    "coarse_description": "pick the screwdriver",
+                    "skill_to_subtask_index": {"pick": 0},
+                    "episodes": {
+                        "0": {
+                            "episode_index": 0,
+                            "description": "",
+                            "skills": [{"name": "pick", "start": 0.0, "end": 0.2}],
+                        }
+                    },
+                }
+            )
+        )
+        pd.DataFrame(
+            [{"subtask": "pick", "subtask_index": 0}]
+        ).set_index("subtask").to_parquet(meta_dir / SUBTASKS_FILENAME)
+
+    dataset.pull_from_repo = pull_from_repo
+
+    sync_subtask_metadata_from_repo(dataset)
+
+    assert (dataset.root / "meta" / SKILLS_FILENAME).exists()
+    assert (dataset.root / "meta" / SUBTASKS_FILENAME).exists()
+    assert dataset.meta.subtasks is not None
+    assert dataset.meta.subtasks.index.tolist() == ["pick"]

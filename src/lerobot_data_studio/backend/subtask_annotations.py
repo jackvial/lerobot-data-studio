@@ -194,6 +194,8 @@ def write_subtasks_parquet(
     if not df.empty:
         df = df.set_index("subtask")
     df.to_parquet(path, engine="pyarrow", compression="snappy")
+    if hasattr(dataset, "meta"):
+        dataset.meta.subtasks = df
     return path
 
 
@@ -265,6 +267,149 @@ def save_episode_annotations(
     skills_path = write_skills_json(dataset, existing)
     subtasks_path = write_subtasks_parquet(dataset, existing.skill_to_subtask_index)
     return existing, skills_path, subtasks_path
+
+
+def _get_episode_timestamp_bounds(
+    dataset: LeRobotDataset,
+    episode_index: int,
+) -> Tuple[float, float]:
+    """Return the first/last frame timestamps for an episode."""
+    info = dataset.meta.episodes[episode_index]
+    from_idx = int(info["dataset_from_index"])
+    to_idx = int(info["dataset_to_index"])
+    if to_idx <= from_idx:
+        return 0.0, 0.0
+
+    first = float(dataset.hf_dataset[from_idx]["timestamp"])
+    last = float(dataset.hf_dataset[to_idx - 1]["timestamp"])
+    return first, last
+
+
+def _get_relative_keep_bounds(
+    dataset: LeRobotDataset,
+    episode_index: int,
+    keep_time_range: Optional[Tuple[float, float]],
+) -> Tuple[float, float]:
+    """Convert an absolute keep range into episode-relative seconds."""
+    episode_start, episode_end = _get_episode_timestamp_bounds(dataset, episode_index)
+    episode_duration = max(episode_end - episode_start, 0.0)
+
+    if keep_time_range is None:
+        return 0.0, episode_duration
+
+    keep_start, keep_end = keep_time_range
+    relative_start = max(0.0, min(float(keep_start) - episode_start, episode_duration))
+    relative_end = max(0.0, min(float(keep_end) - episode_start, episode_duration))
+    if relative_end < relative_start:
+        relative_end = relative_start
+    return relative_start, relative_end
+
+
+def _rebase_episode_skills(
+    source_episode: EpisodeSubtaskAnnotations,
+    new_episode_index: int,
+    keep_start: float,
+    keep_end: float,
+) -> EpisodeSubtaskAnnotations:
+    """Clamp source skills to the kept window and rebase them to t=0."""
+    rebased_skills: List[SubtaskSegment] = []
+    for skill in source_episode.skills:
+        start = max(float(skill.start), keep_start)
+        end = min(float(skill.end), keep_end)
+        if end <= start:
+            continue
+        rebased_skills.append(
+            SubtaskSegment(
+                name=skill.name,
+                start=start - keep_start,
+                end=end - keep_start,
+            )
+        )
+
+    return EpisodeSubtaskAnnotations(
+        episode_index=new_episode_index,
+        description=source_episode.description,
+        skills=normalize_segments(
+            rebased_skills,
+            episode_duration=max(keep_end - keep_start, 0.0),
+            allowed_names=None,
+        ),
+    )
+
+
+def export_subtask_annotations(
+    source_dataset: LeRobotDataset,
+    destination_dataset: LeRobotDataset,
+    episode_mapping: Dict[int, int],
+    keep_time_ranges: Optional[Dict[int, Tuple[float, float]]] = None,
+) -> Optional[SubtaskAnnotationsResponse]:
+    """Project source `skills.json` onto a newly created dataset and persist it.
+
+    `episode_mapping` maps source episode indices to destination episode indices.
+    `keep_time_ranges`, when provided, contains kept windows in the source
+    dataset's timestamp space for trimmed exports.
+    """
+    source_payload = load_skills_json(source_dataset)
+    if not source_payload.episodes:
+        return None
+
+    keep_ranges = keep_time_ranges or {}
+    exported_episodes: Dict[str, EpisodeSubtaskAnnotations] = {}
+
+    for source_episode_index, destination_episode_index in episode_mapping.items():
+        source_episode = source_payload.episodes.get(str(source_episode_index))
+        if source_episode is None:
+            continue
+
+        keep_start, keep_end = _get_relative_keep_bounds(
+            source_dataset,
+            source_episode_index,
+            keep_ranges.get(source_episode_index),
+        )
+        exported_episode = _rebase_episode_skills(
+            source_episode,
+            destination_episode_index,
+            keep_start,
+            keep_end,
+        )
+        if not exported_episode.skills:
+            continue
+        exported_episodes[str(destination_episode_index)] = exported_episode
+
+    if not exported_episodes:
+        return None
+
+    payload = SubtaskAnnotationsResponse(
+        coarse_description=source_payload.coarse_description,
+        skill_to_subtask_index=_build_skill_to_subtask_index(exported_episodes),
+        episodes=exported_episodes,
+    )
+    write_skills_json(destination_dataset, payload)
+    write_subtasks_parquet(destination_dataset, payload.skill_to_subtask_index)
+    return payload
+
+
+def sync_subtask_metadata_from_repo(dataset: LeRobotDataset) -> None:
+    """Fetch optional subtask metadata files when they are missing locally."""
+    allow_patterns: List[str] = []
+    skills_path = _skills_path(dataset)
+    subtasks_path = _subtasks_path(dataset)
+
+    if not skills_path.exists():
+        allow_patterns.append(f"meta/{SKILLS_FILENAME}")
+    if not subtasks_path.exists():
+        allow_patterns.append(f"meta/{SUBTASKS_FILENAME}")
+
+    if allow_patterns:
+        try:
+            dataset.pull_from_repo(allow_patterns=allow_patterns)
+        except Exception as exc:
+            logger.info("Optional subtask metadata sync skipped for %s: %s", dataset.repo_id, exc)
+
+    try:
+        dataset.meta.subtasks = pd.read_parquet(subtasks_path) if subtasks_path.exists() else None
+    except Exception as exc:
+        logger.warning("Failed to refresh subtasks metadata from %s: %s", subtasks_path, exc)
 
 
 def build_summary(
