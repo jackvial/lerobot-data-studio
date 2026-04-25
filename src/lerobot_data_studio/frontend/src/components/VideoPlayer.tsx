@@ -1,11 +1,13 @@
 import React, {
+    forwardRef,
     useCallback,
     useEffect,
+    useImperativeHandle,
     useMemo,
     useRef,
     useState,
 } from "react";
-import { Card, Row, Col, Button, Space, Slider, Tooltip, Select } from "antd";
+import { Card, Row, Col, Button, Space, Tooltip, Select } from "antd";
 import { PlayCircleOutlined, PauseCircleOutlined } from "@ant-design/icons";
 import { VideoInfo } from "@/types";
 import {
@@ -14,10 +16,23 @@ import {
     getVideoTimeRange,
 } from "@/utils/episodeTiming";
 
+export interface VideoTimeUpdateOptions {
+    force?: boolean;
+}
+
+export interface VideoSeekOptions {
+    preview?: boolean;
+}
+
+export interface VideoPlayerHandle {
+    seekTo: (time: number, options?: VideoSeekOptions) => void;
+    getCurrentTime: () => number;
+}
+
 interface VideoPlayerProps {
     videos: VideoInfo[];
     episodeId: number;
-    onTimeUpdate?: (time: number) => void;
+    onTimeUpdate?: (time: number, options?: VideoTimeUpdateOptions) => void;
 }
 
 const SPEED_OPTIONS = [
@@ -29,25 +44,28 @@ const SPEED_OPTIONS = [
     { label: "3x", value: 3.0 },
 ];
 
-const PLAYHEAD_UPDATE_INTERVAL_MS = 33;
-const PARENT_TIME_UPDATE_INTERVAL_MS = 100;
+const PLAYHEAD_UPDATE_INTERVAL_MS = 16;
+const PARENT_TIME_UPDATE_INTERVAL_MS = 16;
 const SECONDARY_SYNC_INTERVAL_MS = 250;
 const SECONDARY_SYNC_THRESHOLD_SECONDS = 0.08;
 
-const VideoPlayer: React.FC<VideoPlayerProps> = ({
-    videos,
-    episodeId,
-    onTimeUpdate,
-}) => {
+const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
+    ({ videos, episodeId, onTimeUpdate }, ref) => {
     const videoRefs = useRef<(HTMLVideoElement | null)[]>([]);
     const animationFrameRef = useRef<number | null>(null);
     const sliderSeekTimeoutRef = useRef<number | null>(null);
+    const sliderSeekFrameRef = useRef<number | null>(null);
+    const pendingSliderSeekRef = useRef<number | null>(null);
     const lastPlayheadPaintRef = useRef(0);
     const lastParentNotificationRef = useRef(0);
     const lastSecondarySyncRef = useRef(0);
+    const currentTimeRef = useRef(0);
+    const durationRef = useRef(0);
+    const scrubberRef = useRef<HTMLInputElement | null>(null);
+    const timeLabelRef = useRef<HTMLSpanElement | null>(null);
+    const isSeekingBySliderRef = useRef(false);
+    const isSliderPointerDownRef = useRef(false);
     const [isPlaying, setIsPlaying] = useState(false);
-    const [currentTime, setCurrentTime] = useState(0);
-    const [isSeekingBySlider, setIsSeekingBySlider] = useState(false);
     const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
 
     const videoRanges = useMemo(
@@ -62,6 +80,19 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     };
 
     const [duration, setDuration] = useState(referenceRange.duration ?? 0);
+    durationRef.current = duration;
+
+    const paintLocalControls = useCallback((time: number) => {
+        const scrubber = scrubberRef.current;
+        if (scrubber) {
+            scrubber.value = String(time);
+        }
+
+        const label = timeLabelRef.current;
+        if (label) {
+            label.textContent = `${time.toFixed(2)}s / ${durationRef.current.toFixed(2)}s`;
+        }
+    }, []);
 
     useEffect(() => {
         videoRefs.current = videoRefs.current.slice(0, videos.length);
@@ -79,6 +110,14 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
             window.clearTimeout(sliderSeekTimeoutRef.current);
             sliderSeekTimeoutRef.current = null;
         }
+    }, []);
+
+    const clearSliderSeekFrame = useCallback(() => {
+        if (sliderSeekFrameRef.current !== null) {
+            window.cancelAnimationFrame(sliderSeekFrameRef.current);
+            sliderSeekFrameRef.current = null;
+        }
+        pendingSliderSeekRef.current = null;
     }, []);
 
     const getVideoUpperBound = useCallback(
@@ -131,6 +170,24 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
         [seekVideoToOffset],
     );
 
+    const clampOffsetToDuration = useCallback((time: number): number => {
+        const clipDuration = durationRef.current;
+        return clipDuration > 0
+            ? Math.min(Math.max(time, 0), clipDuration)
+            : Math.max(time, 0);
+    }, []);
+
+    const seekPrimaryToOffset = useCallback(
+        (relativeTime: number): number => {
+            const primaryVideo = videoRefs.current[0];
+            if (!primaryVideo) {
+                return relativeTime;
+            }
+            return seekVideoToOffset(primaryVideo, 0, relativeTime);
+        },
+        [seekVideoToOffset],
+    );
+
     const updateDisplayedTime = useCallback(
         (
             time: number,
@@ -143,6 +200,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
             const forceLocalUpdate =
                 options?.forceLocalUpdate ?? forceParentUpdate;
             const now = performance.now();
+            currentTimeRef.current = time;
 
             if (
                 forceLocalUpdate ||
@@ -150,7 +208,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                     PLAYHEAD_UPDATE_INTERVAL_MS
             ) {
                 lastPlayheadPaintRef.current = now;
-                setCurrentTime(time);
+                paintLocalControls(time);
             }
 
             if (
@@ -160,10 +218,10 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                         PARENT_TIME_UPDATE_INTERVAL_MS)
             ) {
                 lastParentNotificationRef.current = now;
-                onTimeUpdate(time);
+                onTimeUpdate(time, { force: forceParentUpdate });
             }
         },
-        [onTimeUpdate],
+        [onTimeUpdate, paintLocalControls],
     );
 
     const syncSecondaryVideos = useCallback(
@@ -204,6 +262,111 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
         [referenceRange, videoRanges],
     );
 
+    const getCurrentOffset = useCallback((): number => {
+        const primaryVideo = videoRefs.current[0];
+        if (!primaryVideo) {
+            return currentTimeRef.current;
+        }
+
+        const range = videoRanges[0] ?? referenceRange;
+        const mediaDuration = Number.isFinite(primaryVideo.duration)
+            ? primaryVideo.duration
+            : 0;
+        const clamped = clampToVideoRange(
+            primaryVideo.currentTime,
+            range,
+            mediaDuration,
+        );
+        return Math.max(clamped - range.fromTimestamp, 0);
+    }, [referenceRange, videoRanges]);
+
+    const seekToOffset = useCallback(
+        (time: number) => {
+            const clamped = clampOffsetToDuration(time);
+            seekAllToOffset(clamped);
+            updateDisplayedTime(clamped, {
+                forceLocalUpdate: true,
+                forceParentUpdate: true,
+            });
+            syncSecondaryVideos(clamped, true);
+        },
+        [
+            clampOffsetToDuration,
+            seekAllToOffset,
+            syncSecondaryVideos,
+            updateDisplayedTime,
+        ],
+    );
+
+    const schedulePrimarySliderSeek = useCallback(
+        (relativeTime: number) => {
+            pendingSliderSeekRef.current = relativeTime;
+            if (sliderSeekFrameRef.current !== null) {
+                return;
+            }
+
+            sliderSeekFrameRef.current = window.requestAnimationFrame(() => {
+                sliderSeekFrameRef.current = null;
+                const pendingSeek = pendingSliderSeekRef.current;
+                if (pendingSeek === null) {
+                    return;
+                }
+                seekPrimaryToOffset(pendingSeek);
+            });
+        },
+        [seekPrimaryToOffset],
+    );
+
+    const previewSeekToOffset = useCallback(
+        (time: number) => {
+            const clamped = clampOffsetToDuration(time);
+            clearSliderSeekTimeout();
+            isSeekingBySliderRef.current = true;
+            updateDisplayedTime(clamped, {
+                forceLocalUpdate: true,
+                forceParentUpdate: false,
+            });
+            schedulePrimarySliderSeek(clamped);
+        },
+        [
+            clampOffsetToDuration,
+            clearSliderSeekTimeout,
+            schedulePrimarySliderSeek,
+            updateDisplayedTime,
+        ],
+    );
+
+    const commitSeekToOffset = useCallback(
+        (time: number) => {
+            const clamped = clampOffsetToDuration(time);
+            clearSliderSeekTimeout();
+            clearSliderSeekFrame();
+            isSeekingBySliderRef.current = false;
+            seekToOffset(clamped);
+        },
+        [
+            clampOffsetToDuration,
+            clearSliderSeekFrame,
+            clearSliderSeekTimeout,
+            seekToOffset,
+        ],
+    );
+
+    useImperativeHandle(
+        ref,
+        () => ({
+            seekTo: (time, options) => {
+                if (options?.preview) {
+                    previewSeekToOffset(time);
+                    return;
+                }
+                commitSeekToOffset(time);
+            },
+            getCurrentTime: getCurrentOffset,
+        }),
+        [commitSeekToOffset, getCurrentOffset, previewSeekToOffset],
+    );
+
     const syncFromPrimaryVideo = useCallback(
         (options?: {
             forceLocalUpdate?: boolean;
@@ -215,7 +378,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 options?.forceLocalUpdate ?? forceParentUpdate;
             const ignoreSeeking = options?.ignoreSeeking ?? false;
 
-            if (isSeekingBySlider && !ignoreSeeking) {
+            if (isSeekingBySliderRef.current && !ignoreSeeking) {
                 return;
             }
 
@@ -272,7 +435,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
         [
             clearPlaybackLoop,
             getVideoUpperBound,
-            isSeekingBySlider,
             referenceRange,
             syncSecondaryVideos,
             updateDisplayedTime,
@@ -316,16 +478,20 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     useEffect(() => {
         clearPlaybackLoop();
         clearSliderSeekTimeout();
+        clearSliderSeekFrame();
         lastPlayheadPaintRef.current = 0;
         lastParentNotificationRef.current = 0;
         lastSecondarySyncRef.current = 0;
+        currentTimeRef.current = 0;
+        isSeekingBySliderRef.current = false;
+        isSliderPointerDownRef.current = false;
         setIsPlaying(false);
-        setIsSeekingBySlider(false);
-        setCurrentTime(0);
-        setDuration(referenceRange.duration ?? 0);
+        durationRef.current = referenceRange.duration ?? 0;
+        setDuration(durationRef.current);
+        paintLocalControls(0);
         seekAllToOffset(0);
         if (onTimeUpdate) {
-            onTimeUpdate(0);
+            onTimeUpdate(0, { force: true });
         }
         // We intentionally exclude onTimeUpdate from the dependency array so that
         // a parent re-rendering with a fresh callback identity does not keep
@@ -339,6 +505,8 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
         seekAllToOffset,
         clearPlaybackLoop,
         clearSliderSeekTimeout,
+        clearSliderSeekFrame,
+        paintLocalControls,
     ]);
 
     useEffect(() => {
@@ -353,8 +521,9 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
         return () => {
             clearPlaybackLoop();
             clearSliderSeekTimeout();
+            clearSliderSeekFrame();
         };
-    }, [clearPlaybackLoop, clearSliderSeekTimeout]);
+    }, [clearPlaybackLoop, clearSliderSeekTimeout, clearSliderSeekFrame]);
 
     const togglePlayback = useCallback(() => {
         const allVideos = videoRefs.current.filter(
@@ -383,24 +552,31 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
             firstVideo.currentTime < lowerBound ||
             firstVideo.currentTime >= upperBound
         ) {
-            seekAllToOffset(0);
-            setCurrentTime(0);
-            if (onTimeUpdate) {
-                onTimeUpdate(0);
-            }
+            seekToOffset(0);
         }
 
-        allVideos.forEach((video) => {
-            void video.play();
-        });
         setIsPlaying(true);
-        startPlaybackLoop();
+        allVideos.forEach((video) => {
+            video.playbackRate = playbackSpeed;
+            const playRequest = video.play();
+            if (video === firstVideo) {
+                void playRequest
+                    .then(() => {
+                        startPlaybackLoop();
+                    })
+                    .catch(() => {
+                        clearPlaybackLoop();
+                        setIsPlaying(false);
+                    });
+            }
+        });
     }, [
+        clearPlaybackLoop,
         getVideoUpperBound,
-        onTimeUpdate,
         pauseAllVideos,
+        playbackSpeed,
         referenceRange.fromTimestamp,
-        seekAllToOffset,
+        seekToOffset,
         startPlaybackLoop,
         syncFromPrimaryVideo,
     ]);
@@ -435,7 +611,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
         index: number,
         e: React.SyntheticEvent<HTMLVideoElement>,
     ) => {
-        if (isSeekingBySlider) {
+        if (isSeekingBySliderRef.current) {
             return;
         }
         const video = e.currentTarget;
@@ -470,26 +646,36 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
         }
     };
 
-    const handleSliderChange = (value: number) => {
-        const clipDuration = duration;
-        const clamped = Math.min(Math.max(value, 0), clipDuration);
-        clearSliderSeekTimeout();
-        setIsSeekingBySlider(true);
-        seekAllToOffset(clamped);
-        updateDisplayedTime(clamped, {
+    const finishSliderSeek = useCallback(() => {
+        const pendingSeek =
+            pendingSliderSeekRef.current ?? currentTimeRef.current;
+        commitSeekToOffset(pendingSeek);
+        syncFromPrimaryVideo({
             forceLocalUpdate: true,
             forceParentUpdate: true,
+            ignoreSeeking: true,
         });
-        syncSecondaryVideos(clamped, true);
-        sliderSeekTimeoutRef.current = window.setTimeout(() => {
-            setIsSeekingBySlider(false);
-            syncFromPrimaryVideo({
-                forceLocalUpdate: true,
-                forceParentUpdate: true,
-                ignoreSeeking: true,
-            });
-            sliderSeekTimeoutRef.current = null;
-        }, 100);
+    }, [commitSeekToOffset, syncFromPrimaryVideo]);
+
+    const handleSliderPointerDown = () => {
+        isSliderPointerDownRef.current = true;
+        clearSliderSeekTimeout();
+    };
+
+    const handleSliderPointerEnd = () => {
+        isSliderPointerDownRef.current = false;
+        finishSliderSeek();
+    };
+
+    const handleSliderChange = (event: React.FormEvent<HTMLInputElement>) => {
+        const value = Number(event.currentTarget.value);
+        previewSeekToOffset(value);
+        if (!isSliderPointerDownRef.current) {
+            sliderSeekTimeoutRef.current = window.setTimeout(
+                finishSliderSeek,
+                80,
+            );
+        }
     };
 
     const handlePlayPause = () => {
@@ -498,11 +684,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
     const handleStop = () => {
         pauseAllVideos();
-        seekAllToOffset(0);
-        setCurrentTime(0);
-        if (onTimeUpdate) {
-            onTimeUpdate(0);
-        }
+        seekToOffset(0);
     };
 
     const handleLoadedMetadata = (
@@ -516,6 +698,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
             const range = videoRanges[index] ?? referenceRange;
             const upperBound = getVideoUpperBound(index, video.duration);
             const clipDuration = Math.max(upperBound - range.fromTimestamp, 0);
+            durationRef.current = clipDuration;
             setDuration(clipDuration);
             updateDisplayedTime(0, {
                 forceLocalUpdate: true,
@@ -523,21 +706,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
             });
         }
     };
-
-    const handlePrimaryPlay = useCallback(() => {
-        setIsPlaying(true);
-        startPlaybackLoop();
-    }, [startPlaybackLoop]);
-
-    const handlePrimaryPause = useCallback(() => {
-        clearPlaybackLoop();
-        setIsPlaying(false);
-        syncFromPrimaryVideo({
-            forceLocalUpdate: true,
-            forceParentUpdate: true,
-            ignoreSeeking: true,
-        });
-    }, [clearPlaybackLoop, syncFromPrimaryVideo]);
 
     const handleSpeedChange = (speed: number) => {
         setPlaybackSpeed(speed);
@@ -581,8 +749,11 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                         style={{ width: 80 }}
                         size="small"
                     />
-                    <span style={{ color: "rgba(255, 255, 255, 0.65)" }}>
-                        {currentTime.toFixed(1)}s / {duration.toFixed(1)}s
+                    <span
+                        ref={timeLabelRef}
+                        style={{ color: "rgba(255, 255, 255, 0.65)" }}
+                    >
+                        {`0.00s / ${duration.toFixed(2)}s`}
                     </span>
                 </Space>
             }
@@ -603,12 +774,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                                 onTimeUpdate={(e) => handleTimeUpdate(index, e)}
                                 onLoadedMetadata={(e) =>
                                     handleLoadedMetadata(index, e)
-                                }
-                                onPlay={
-                                    index === 0 ? handlePrimaryPlay : undefined
-                                }
-                                onPause={
-                                    index === 0 ? handlePrimaryPause : undefined
                                 }
                             />
                             <div
@@ -631,20 +796,31 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
             </Row>
 
             <div style={{ marginTop: "16px", padding: "0 8px" }}>
-                <Slider
+                <input
+                    ref={scrubberRef}
+                    type="range"
                     min={0}
                     max={duration}
-                    value={currentTime}
-                    step={0.1}
-                    onChange={handleSliderChange}
+                    step={0.001}
+                    defaultValue={0}
+                    onInput={handleSliderChange}
+                    onPointerDown={handleSliderPointerDown}
+                    onPointerUp={handleSliderPointerEnd}
+                    onPointerCancel={handleSliderPointerEnd}
+                    onKeyUp={finishSliderSeek}
+                    onBlur={finishSliderSeek}
                     disabled={duration <= 0}
-                    tooltip={{
-                        formatter: (value) => `${(value || 0).toFixed(1)}s`,
+                    style={{
+                        width: "100%",
+                        cursor: duration > 0 ? "pointer" : "not-allowed",
                     }}
                 />
             </div>
         </Card>
     );
-};
+    },
+);
+
+VideoPlayer.displayName = "VideoPlayer";
 
 export default VideoPlayer;

@@ -1,4 +1,11 @@
-import React, { useEffect, useRef, useMemo } from 'react';
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useMemo,
+} from 'react';
 import { Card, Empty } from 'antd';
 import Dygraph from 'dygraphs';
 import 'dygraphs/dist/dygraph.css';
@@ -10,13 +17,19 @@ interface DataChartProps {
   currentTime?: number;
 }
 
-const DataChart: React.FC<DataChartProps> = ({
+export interface DataChartHandle {
+  setPlayhead: (time: number | undefined) => void;
+}
+
+const DataChart = forwardRef<DataChartHandle, DataChartProps>(({
   episodeData,
   featureNames,
   currentTime,
-}) => {
+}, ref) => {
   const chartRef = useRef<HTMLDivElement>(null);
+  const playheadMarkerRef = useRef<HTMLDivElement>(null);
   const dygraphRef = useRef<Dygraph | null>(null);
+  const currentTimeRef = useRef<number | undefined>(currentTime);
 
   const chartData = useMemo(() => {
     if (!episodeData || episodeData.length === 0) return null;
@@ -37,6 +50,40 @@ const DataChart: React.FC<DataChartProps> = ({
       return null;
     }
   }, [episodeData]);
+
+  const updatePlayheadMarker = useCallback(() => {
+    const graph = dygraphRef.current;
+    const marker = playheadMarkerRef.current;
+    if (!graph || !marker || currentTimeRef.current === undefined) {
+      if (marker) {
+        marker.style.display = 'none';
+      }
+      return;
+    }
+
+    const area = graph.getArea();
+    const markerX = graph.toDomXCoord(currentTimeRef.current);
+    if (markerX < area.x || markerX > area.x + area.w) {
+      marker.style.display = 'none';
+      return;
+    }
+
+    marker.style.display = 'block';
+    marker.style.top = `${area.y}px`;
+    marker.style.height = `${area.h}px`;
+    marker.style.transform = `translateX(${markerX}px)`;
+  }, []);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      setPlayhead: (time: number | undefined) => {
+        currentTimeRef.current = time;
+        updatePlayheadMarker();
+      },
+    }),
+    [updatePlayheadMarker]
+  );
 
   useEffect(() => {
     if (!chartRef.current || !chartData || chartData.length === 0) return;
@@ -70,6 +117,9 @@ const DataChart: React.FC<DataChartProps> = ({
         rangeSelectorPlotFillColor: '#666',
         interactionModel: Dygraph.defaultInteractionModel,
         xValueParser: (x: string) => parseFloat(x),
+        drawCallback: () => {
+          window.requestAnimationFrame(updatePlayheadMarker);
+        },
         axes: {
           x: {
             axisLabelFormatter: (x: number | Date) => {
@@ -87,6 +137,7 @@ const DataChart: React.FC<DataChartProps> = ({
         },
         xlabel: 'Time (seconds)',
       });
+      window.requestAnimationFrame(updatePlayheadMarker);
     } catch (error) {
       console.error('Error creating Dygraph:', error);
     }
@@ -98,39 +149,43 @@ const DataChart: React.FC<DataChartProps> = ({
         dygraphRef.current = null;
       }
     };
-  }, [chartData, featureNames]);
+  }, [chartData, featureNames, updatePlayheadMarker]);
 
-  // Update vertical line when currentTime changes
   useEffect(() => {
-    if (dygraphRef.current && currentTime !== undefined) {
-      // Draw a vertical line at the current time
-      dygraphRef.current.updateOptions({
-        underlayCallback: (canvas, area, g) => {
-          const x = g.toDomXCoord(currentTime);
-
-          // Only draw if the time is within the visible range
-          if (x >= area.x && x <= area.x + area.w) {
-            canvas.strokeStyle = '#ff6b6b';
-            canvas.lineWidth = 2;
-            canvas.beginPath();
-            canvas.moveTo(x, area.y);
-            canvas.lineTo(x, area.y + area.h);
-            canvas.stroke();
-          }
-        },
-      });
-    }
-  }, [currentTime]);
+    currentTimeRef.current = currentTime;
+    updatePlayheadMarker();
+  }, [currentTime, updatePlayheadMarker]);
 
   return (
     <Card title='Episode Data'>
       {chartData && chartData.length > 0 ? (
-        <div ref={chartRef} style={{ width: '100%', height: '400px' }} />
+        <div
+          style={{ position: 'relative', width: '100%', height: '400px' }}
+        >
+          <div ref={chartRef} style={{ width: '100%', height: '100%' }} />
+          <div
+            ref={playheadMarkerRef}
+            style={{
+              position: 'absolute',
+              left: 0,
+              top: 0,
+              width: 2,
+              height: 0,
+              backgroundColor: '#ff6b6b',
+              display: 'none',
+              pointerEvents: 'none',
+              transform: 'translateX(0)',
+              zIndex: 2,
+            }}
+          />
+        </div>
       ) : (
         <Empty description='No data available for this episode' />
       )}
     </Card>
   );
-};
+});
+
+DataChart.displayName = 'DataChart';
 
 export default DataChart;

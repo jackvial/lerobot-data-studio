@@ -1,6 +1,8 @@
 import React, {
+  forwardRef,
   useCallback,
   useEffect,
+  useImperativeHandle,
   useMemo,
   useRef,
   useState,
@@ -67,7 +69,16 @@ interface SubtaskAnnotationPanelProps {
   episodeDuration: number;
   fps: number;
   currentTime: number;
-  onSeek: (time: number) => void;
+  onSeek: (time: number, options?: SubtaskSeekOptions) => void;
+  getCurrentTime?: () => number;
+}
+
+export interface SubtaskSeekOptions {
+  preview?: boolean;
+}
+
+export interface SubtaskAnnotationPanelHandle {
+  setPlayhead: (time: number) => void;
 }
 
 type DragMode =
@@ -220,7 +231,10 @@ const snapSegmentsToCoverage = (
   });
 };
 
-const SubtaskAnnotationPanel: React.FC<SubtaskAnnotationPanelProps> = ({
+const SubtaskAnnotationPanel = forwardRef<
+  SubtaskAnnotationPanelHandle,
+  SubtaskAnnotationPanelProps
+>(({
   namespace,
   name,
   datasetId,
@@ -229,10 +243,15 @@ const SubtaskAnnotationPanel: React.FC<SubtaskAnnotationPanelProps> = ({
   fps,
   currentTime,
   onSeek,
-}) => {
+  getCurrentTime,
+}, ref) => {
   const queryClient = useQueryClient();
   const barRef = useRef<HTMLDivElement | null>(null);
   const dragModeRef = useRef<DragMode>(null);
+  const currentTimeRef = useRef(currentTime);
+  const playheadRef = useRef<HTMLDivElement | null>(null);
+  const playheadLabelRef = useRef<HTMLDivElement | null>(null);
+  const isDraggingPlayheadRef = useRef(false);
   const [activeSubtask, setActiveSubtask] = useState<string | null>(null);
   const [activeSegmentId, setActiveSegmentId] = useState<string | null>(null);
   const [dragPreview, setDragPreview] = useState<{
@@ -269,6 +288,37 @@ const SubtaskAnnotationPanel: React.FC<SubtaskAnnotationPanelProps> = ({
     });
 
   const segmentsWithIds = useMemo(() => withIds(draft), [draft]);
+
+  const paintPlayhead = useCallback(
+    (time: number) => {
+      currentTimeRef.current = time;
+      const playhead = playheadRef.current;
+      if (!playhead || episodeDuration <= 0) {
+        return;
+      }
+
+      const pct = Math.min(Math.max((time / episodeDuration) * 100, 0), 100);
+      playhead.style.left = `${pct}%`;
+
+      const label = playheadLabelRef.current;
+      if (label) {
+        label.textContent = `${time.toFixed(2)}s`;
+      }
+    },
+    [episodeDuration]
+  );
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      setPlayhead: paintPlayhead,
+    }),
+    [paintPlayhead]
+  );
+
+  useEffect(() => {
+    paintPlayhead(currentTime);
+  }, [currentTime, paintPlayhead]);
 
   useEffect(() => {
     if (
@@ -395,7 +445,7 @@ const SubtaskAnnotationPanel: React.FC<SubtaskAnnotationPanelProps> = ({
       }
       const target = event.target as HTMLElement;
       // Clicks on existing segments / handles are handled by their own listeners.
-      if (target.closest('[data-segment-id]')) {
+      if (target.closest('[data-segment-id], [data-playhead]')) {
         return;
       }
       event.preventDefault();
@@ -541,6 +591,56 @@ const SubtaskAnnotationPanel: React.FC<SubtaskAnnotationPanelProps> = ({
     [timeFromEvent]
   );
 
+  const handlePlayheadPointerDown = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (event.button !== 0) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      isDraggingPlayheadRef.current = true;
+      event.currentTarget.setPointerCapture(event.pointerId);
+      const time = timeFromEvent(event.clientX);
+      paintPlayhead(time);
+      onSeek(time, { preview: true });
+    },
+    [onSeek, paintPlayhead, timeFromEvent]
+  );
+
+  const handlePlayheadPointerMove = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (!isDraggingPlayheadRef.current) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      const time = timeFromEvent(event.clientX);
+      paintPlayhead(time);
+      onSeek(time, { preview: true });
+    },
+    [onSeek, paintPlayhead, timeFromEvent]
+  );
+
+  const handlePlayheadPointerEnd = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (!isDraggingPlayheadRef.current) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      try {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      } catch {
+        /* pointer capture may already be released */
+      }
+      isDraggingPlayheadRef.current = false;
+      const time = timeFromEvent(event.clientX);
+      paintPlayhead(time);
+      onSeek(time);
+    },
+    [onSeek, paintPlayhead, timeFromEvent]
+  );
+
   const handleTaskChange = useCallback((event: RadioChangeEvent) => {
     setActiveSubtask(event.target.value as string);
   }, []);
@@ -594,7 +694,9 @@ const SubtaskAnnotationPanel: React.FC<SubtaskAnnotationPanelProps> = ({
           return;
         }
         event.preventDefault();
-        const playhead = snapToFrame(currentTime);
+        const playhead = snapToFrame(
+          getCurrentTime ? getCurrentTime() : currentTimeRef.current
+        );
         const indexed = withIds(draft);
         const active = indexed.find((s) => s.id === activeSegmentId);
         if (event.key === '[') {
@@ -656,9 +758,9 @@ const SubtaskAnnotationPanel: React.FC<SubtaskAnnotationPanelProps> = ({
     activeSegmentId,
     activeSubtask,
     addSegment,
-    currentTime,
     draft,
     episodeDuration,
+    getCurrentTime,
     removeSegment,
     snapToFrame,
     tasks,
@@ -879,6 +981,7 @@ const SubtaskAnnotationPanel: React.FC<SubtaskAnnotationPanelProps> = ({
             style={{
               position: 'relative',
               width: '100%',
+              marginTop: 18,
               height: BAR_HEIGHT,
               backgroundColor: '#f0f2f5',
               border: '1px solid #d9d9d9',
@@ -893,19 +996,38 @@ const SubtaskAnnotationPanel: React.FC<SubtaskAnnotationPanelProps> = ({
             {renderDragPreview()}
             {playheadPct !== null && (
               <div
+                ref={playheadRef}
+                data-playhead
+                onPointerDown={handlePlayheadPointerDown}
+                onPointerMove={handlePlayheadPointerMove}
+                onPointerUp={handlePlayheadPointerEnd}
+                onPointerCancel={handlePlayheadPointerEnd}
                 style={{
                   position: 'absolute',
                   left: `${playheadPct}%`,
                   top: -6,
                   bottom: -6,
-                  width: 2,
-                  backgroundColor: '#ff4d4f',
-                  boxShadow: '0 0 0 1px rgba(255,255,255,0.9)',
-                  pointerEvents: 'none',
-                  transform: 'translateX(-1px)',
+                  width: 12,
+                  cursor: 'ew-resize',
+                  touchAction: 'none',
+                  pointerEvents: 'auto',
+                  transform: 'translateX(-6px)',
                   zIndex: 5,
                 }}
               >
+                <div
+                  style={{
+                    position: 'absolute',
+                    left: '50%',
+                    top: 0,
+                    bottom: 0,
+                    width: 2,
+                    backgroundColor: '#ff4d4f',
+                    boxShadow: '0 0 0 1px rgba(255,255,255,0.9)',
+                    pointerEvents: 'none',
+                    transform: 'translateX(-1px)',
+                  }}
+                />
                 <div
                   style={{
                     position: 'absolute',
@@ -935,6 +1057,7 @@ const SubtaskAnnotationPanel: React.FC<SubtaskAnnotationPanelProps> = ({
                   }}
                 />
                 <div
+                  ref={playheadLabelRef}
                   style={{
                     position: 'absolute',
                     top: -22,
@@ -1019,6 +1142,8 @@ const SubtaskAnnotationPanel: React.FC<SubtaskAnnotationPanelProps> = ({
       </Space>
     </Card>
   );
-};
+});
+
+SubtaskAnnotationPanel.displayName = 'SubtaskAnnotationPanel';
 
 export default SubtaskAnnotationPanel;

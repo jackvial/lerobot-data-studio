@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Layout,
@@ -22,15 +22,21 @@ import { datasetApi } from '@/services/api';
 import { useSelectedEpisodes } from '@/hooks/useSelectedEpisodes';
 import { useEpisodeTrims } from '@/hooks/useEpisodeTrims';
 import { useVideoPreloader } from '@/hooks/useVideoPreloader';
-import VideoPlayer from './VideoPlayer';
-import DataChart from './DataChart';
-import IdleTimeline from './IdleTimeline';
+import VideoPlayer, {
+  VideoPlayerHandle,
+  VideoSeekOptions,
+  VideoTimeUpdateOptions,
+} from './VideoPlayer';
+import DataChart, { DataChartHandle } from './DataChart';
+import IdleTimeline, { IdleTimelineHandle } from './IdleTimeline';
 import LoadingIndicator from './LoadingIndicator';
 import EpisodeSidebar from './EpisodeSidebar';
 import EpisodeIndexDisplay from './EpisodeIndexDisplay';
 import EpisodeNavigation from './EpisodeNavigation';
 import DatasetCompletionModal from './DatasetCompletionModal';
-import SubtaskAnnotationPanel from './SubtaskAnnotationPanel';
+import SubtaskAnnotationPanel, {
+  SubtaskAnnotationPanelHandle,
+} from './SubtaskAnnotationPanel';
 import { createDatasetRequest } from '@/utils/createDataset';
 import { deriveEpisodeTrimFromIdleSpans } from '@/utils/episodeTiming';
 
@@ -51,6 +57,11 @@ const DatasetViewer: React.FC = () => {
   const [isCreateModalVisible, setIsCreateModalVisible] = useState(false);
   const [isShortcutsModalVisible, setIsShortcutsModalVisible] = useState(false);
   const [currentVideoTime, setCurrentVideoTime] = useState(0);
+  const currentVideoTimeRef = useRef(0);
+  const videoPlayerRef = useRef<VideoPlayerHandle | null>(null);
+  const subtaskPanelRef = useRef<SubtaskAnnotationPanelHandle | null>(null);
+  const idleTimelineRef = useRef<IdleTimelineHandle | null>(null);
+  const dataChartRef = useRef<DataChartHandle | null>(null);
   const [idleThreshold, setIdleThreshold] = useState(0.5);
   const [idleMinDuration, setIdleMinDuration] = useState(0.25);
   const [creationTaskId, setCreationTaskId] = useState<string | null>(null);
@@ -278,6 +289,36 @@ const DatasetViewer: React.FC = () => {
     getVideoUrl
   );
 
+  const paintPlaybackTime = useCallback((time: number) => {
+    subtaskPanelRef.current?.setPlayhead(time);
+    idleTimelineRef.current?.setPlayhead(time);
+    dataChartRef.current?.setPlayhead(time);
+  }, []);
+
+  const handleVideoTimeUpdate = useCallback(
+    (time: number, options?: VideoTimeUpdateOptions) => {
+      currentVideoTimeRef.current = time;
+      paintPlaybackTime(time);
+      if (options?.force) {
+        setCurrentVideoTime(time);
+      }
+    },
+    [paintPlaybackTime]
+  );
+
+  const getExactVideoTime = useCallback(() => {
+    return videoPlayerRef.current?.getCurrentTime() ?? currentVideoTimeRef.current;
+  }, []);
+
+  const handleVideoSeek = useCallback((time: number, options?: VideoSeekOptions) => {
+    currentVideoTimeRef.current = time;
+    paintPlaybackTime(time);
+    if (!options?.preview) {
+      setCurrentVideoTime(time);
+    }
+    videoPlayerRef.current?.seekTo(time, options);
+  }, [paintPlaybackTime]);
+
   const handleEpisodeChange = (newEpisodeId: number) => {
     setCurrentEpisodeId(newEpisodeId);
   };
@@ -298,8 +339,10 @@ const DatasetViewer: React.FC = () => {
   }, [currentEpisodeId, getTrimForEpisode]);
 
   useEffect(() => {
+    currentVideoTimeRef.current = 0;
+    paintPlaybackTime(0);
     setCurrentVideoTime(0);
-  }, [currentEpisodeId]);
+  }, [currentEpisodeId, paintPlaybackTime]);
 
   // Update URL when episode changes
   useEffect(() => {
@@ -561,12 +604,14 @@ const DatasetViewer: React.FC = () => {
               />
 
               <VideoPlayer
+                ref={videoPlayerRef}
                 videos={episodeData.videos_info}
                 episodeId={currentEpisodeId}
-                onTimeUpdate={setCurrentVideoTime}
+                onTimeUpdate={handleVideoTimeUpdate}
               />
 
               <SubtaskAnnotationPanel
+                ref={subtaskPanelRef}
                 namespace={namespace!}
                 name={name!}
                 datasetId={datasetId}
@@ -585,10 +630,12 @@ const DatasetViewer: React.FC = () => {
                 }
                 fps={episodeData.dataset_info.fps}
                 currentTime={currentVideoTime}
-                onSeek={setCurrentVideoTime}
+                onSeek={handleVideoSeek}
+                getCurrentTime={getExactVideoTime}
               />
 
               <IdleTimeline
+                ref={idleTimelineRef}
                 spans={idleAnalysis?.spans ?? []}
                 episodeDuration={
                   idleAnalysis?.episode_duration ??
@@ -614,6 +661,7 @@ const DatasetViewer: React.FC = () => {
               />
 
               <DataChart
+                ref={dataChartRef}
                 episodeData={episodeData.episode_data}
                 featureNames={episodeData.feature_names}
                 currentTime={currentVideoTime}

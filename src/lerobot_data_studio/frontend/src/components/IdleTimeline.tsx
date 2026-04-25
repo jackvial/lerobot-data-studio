@@ -1,4 +1,10 @@
-import React from 'react';
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+} from 'react';
 import {
   Button,
   Card,
@@ -32,6 +38,10 @@ interface IdleTimelineProps {
   onClearTrim?: () => void;
 }
 
+export interface IdleTimelineHandle {
+  setPlayhead: (time: number | undefined) => void;
+}
+
 const BAR_HEIGHT = 24;
 // The motion signal is std-normalized per feature then L2-norm'd, so for a
 // D-dim state vector typical "moving" frames sit near sqrt(D) (~2.4 for 6
@@ -44,7 +54,7 @@ const MIN_DURATION_MIN = 0.0;
 const MIN_DURATION_MAX = 5.0;
 const MIN_DURATION_STEP = 0.05;
 
-const IdleTimeline: React.FC<IdleTimelineProps> = ({
+const IdleTimeline = forwardRef<IdleTimelineHandle, IdleTimelineProps>(({
   spans,
   episodeDuration,
   totalIdleSeconds,
@@ -58,13 +68,43 @@ const IdleTimeline: React.FC<IdleTimelineProps> = ({
   proposedTrim,
   onApplyTrim,
   onClearTrim,
-}) => {
+}, ref) => {
+  const playheadRef = useRef<HTMLDivElement | null>(null);
   const hasDuration = episodeDuration > 0;
   const playheadPct =
     hasDuration && currentTime !== undefined
       ? Math.min(Math.max((currentTime / episodeDuration) * 100, 0), 100)
       : null;
   const idlePct = hasDuration ? (totalIdleSeconds / episodeDuration) * 100 : 0;
+
+  const paintPlayhead = useCallback(
+    (time: number | undefined) => {
+      const playhead = playheadRef.current;
+      if (!playhead || !hasDuration || time === undefined) {
+        if (playhead) {
+          playhead.style.display = 'none';
+        }
+        return;
+      }
+
+      const pct = Math.min(Math.max((time / episodeDuration) * 100, 0), 100);
+      playhead.style.display = 'block';
+      playhead.style.left = `${pct}%`;
+    },
+    [episodeDuration, hasDuration]
+  );
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      setPlayhead: paintPlayhead,
+    }),
+    [paintPlayhead]
+  );
+
+  useEffect(() => {
+    paintPlayhead(currentTime);
+  }, [currentTime, paintPlayhead]);
 
   const renderTimeline = () => {
     if (!hasDuration) {
@@ -120,15 +160,17 @@ const IdleTimeline: React.FC<IdleTimelineProps> = ({
               </Tooltip>
             );
           })}
-          {playheadPct !== null && (
+          {hasDuration && (
             <div
+              ref={playheadRef}
               style={{
                 position: 'absolute',
-                left: `${playheadPct}%`,
+                left: `${playheadPct ?? 0}%`,
                 top: 0,
                 bottom: 0,
                 width: 2,
                 backgroundColor: '#1677ff',
+                display: playheadPct === null ? 'none' : 'block',
                 pointerEvents: 'none',
                 transform: 'translateX(-1px)',
               }}
@@ -270,6 +312,8 @@ const IdleTimeline: React.FC<IdleTimelineProps> = ({
       </Space>
     </Card>
   );
-};
+});
+
+IdleTimeline.displayName = 'IdleTimeline';
 
 export default IdleTimeline;
