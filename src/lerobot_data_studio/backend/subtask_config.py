@@ -21,8 +21,8 @@ logger = logging.getLogger(__name__)
 # var below for project-specific lists.
 DEFAULT_SUBTASKS: List[str] = [
     "move to the orange cube and pick up the cube",
-    "move to the X marker and drop the cube",
-    "go back to rest position",
+    "move to the X marker",
+    "drop the cube and go back to the rest position",
 ]
 
 _OVERRIDE_ENV_VAR = "LEROBOT_DATA_STUDIO_SUBTASKS_PATH"

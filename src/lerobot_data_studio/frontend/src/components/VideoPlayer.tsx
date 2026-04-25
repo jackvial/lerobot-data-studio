@@ -177,17 +177,6 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
             : Math.max(time, 0);
     }, []);
 
-    const seekPrimaryToOffset = useCallback(
-        (relativeTime: number): number => {
-            const primaryVideo = videoRefs.current[0];
-            if (!primaryVideo) {
-                return relativeTime;
-            }
-            return seekVideoToOffset(primaryVideo, 0, relativeTime);
-        },
-        [seekVideoToOffset],
-    );
-
     const updateDisplayedTime = useCallback(
         (
             time: number,
@@ -298,7 +287,7 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         ],
     );
 
-    const schedulePrimarySliderSeek = useCallback(
+    const scheduleSliderSeek = useCallback(
         (relativeTime: number) => {
             pendingSliderSeekRef.current = relativeTime;
             if (sliderSeekFrameRef.current !== null) {
@@ -311,10 +300,10 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
                 if (pendingSeek === null) {
                     return;
                 }
-                seekPrimaryToOffset(pendingSeek);
+                seekAllToOffset(pendingSeek);
             });
         },
-        [seekPrimaryToOffset],
+        [seekAllToOffset],
     );
 
     const previewSeekToOffset = useCallback(
@@ -326,12 +315,12 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
                 forceLocalUpdate: true,
                 forceParentUpdate: false,
             });
-            schedulePrimarySliderSeek(clamped);
+            scheduleSliderSeek(clamped);
         },
         [
             clampOffsetToDuration,
             clearSliderSeekTimeout,
-            schedulePrimarySliderSeek,
+            scheduleSliderSeek,
             updateDisplayedTime,
         ],
     );
