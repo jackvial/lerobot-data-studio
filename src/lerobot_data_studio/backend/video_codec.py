@@ -36,6 +36,7 @@ logger = logging.getLogger(__name__)
 _ALLOWED_CODECS = {"h264", "hevc", "libsvtav1"}
 _DEFAULT_CODEC = "hevc"
 _DEFAULT_PRESET = "ultrafast"
+_TIMESTAMP_EPSILON = 1e-9
 
 
 def _resolve_codec() -> str:
@@ -245,7 +246,10 @@ def keep_episodes_from_video_with_av(
 
             frame_time = float(frame.pts * frame.time_base) if frame.pts is not None else 0.0
 
-            while range_idx < len(time_ranges) and frame_time >= time_ranges[range_idx][1]:
+            while (
+                range_idx < len(time_ranges)
+                and frame_time + _TIMESTAMP_EPSILON >= time_ranges[range_idx][1]
+            ):
                 range_idx += 1
 
             if range_idx >= len(time_ranges):

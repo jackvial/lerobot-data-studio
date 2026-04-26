@@ -11,10 +11,14 @@ import psutil
 from lerobot.datasets.dataset_tools import delete_episodes
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
-from .idle_trim import trim_episodes_with_explicit_bounds
+from .idle_trim import exclusive_keep_time_range, trim_episodes_with_explicit_bounds
 from .models import CreateTaskStatus, DatasetLoadingStatus, EpisodeTrimBounds
 from .state_store import StateStore
-from .subtask_annotations import export_subtask_annotations, sync_subtask_metadata_from_repo
+from .subtask_annotations import (
+    export_subtask_annotations,
+    materialize_subtask_index_feature,
+    sync_subtask_metadata_from_repo,
+)
 from .trimmed_dataset_export import build_trimmed_dataset_with_copied_videos
 
 logger = logging.getLogger(__name__)
@@ -140,7 +144,7 @@ def create_dataset_task(
             )
             exported_episode_order = [report.episode_id for report in _reports]
             keep_time_ranges = {
-                report.episode_id: (float(report.keep_start_time), float(report.keep_end_time))
+                report.episode_id: exclusive_keep_time_range(report, float(dataset.meta.fps))
                 for report in _reports
             }
         else:
@@ -166,12 +170,13 @@ def create_dataset_task(
             old_episode_id: new_episode_id
             for new_episode_id, old_episode_id in enumerate(exported_episode_order)
         }
-        export_subtask_annotations(
+        subtask_payload = export_subtask_annotations(
             source_dataset=dataset,
             destination_dataset=filtered_dataset,
             episode_mapping=episode_mapping,
             keep_time_ranges=keep_time_ranges or None,
         )
+        materialize_subtask_index_feature(filtered_dataset, subtask_payload)
 
         state_store.set_creation_task(
             task_id,

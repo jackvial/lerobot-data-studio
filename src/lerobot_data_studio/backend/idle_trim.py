@@ -40,6 +40,15 @@ class EpisodeTrimReport:
         return self.keep_end - self.keep_start + 1
 
 
+def exclusive_keep_time_range(report: EpisodeTrimReport, fps: float) -> tuple[float, float]:
+    """Return the kept frame window as LeRobot-style [start, end) seconds."""
+    end_time = float(report.keep_start_time) + (float(report.kept_frames) / float(fps))
+    return (
+        float(report.keep_start_time),
+        round(end_time, 12),
+    )
+
+
 def compute_trim_bounds(
     spans: list[IdleSpan], n_frames: int, fps: float
 ) -> tuple[int, int]:

@@ -16,11 +16,13 @@ import pytest
 from lerobot_data_studio.backend.models import SubtaskSegment
 from lerobot_data_studio.backend.subtask_annotations import (
     SKILLS_FILENAME,
+    SUBTASK_INDEX_FEATURE,
     SUBTASKS_FILENAME,
     build_summary,
     export_subtask_annotations,
     get_episode_duration,
     load_skills_json,
+    materialize_subtask_index_feature,
     normalize_segments,
     save_episode_annotations,
     sync_subtask_metadata_from_repo,
@@ -69,7 +71,7 @@ def _make_destination_dataset(tmp_path: Path) -> Any:
     return SimpleNamespace(
         root=tmp_path,
         repo_id="namespace/destination",
-        meta=SimpleNamespace(subtasks=None),
+        meta=SimpleNamespace(subtasks=None, features={}),
     )
 
 
@@ -272,6 +274,58 @@ def test_export_subtask_annotations_reindexes_and_trims_segments(tmp_path: Path)
     df = pd.read_parquet(destination.root / "meta" / SUBTASKS_FILENAME)
     assert df.index.tolist() == ["pick", "place"]
     assert df["subtask_index"].tolist() == [0, 1]
+
+
+def test_materialize_subtask_index_feature_updates_info_and_frame_data(tmp_path: Path):
+    source = _make_dataset(tmp_path / "source")
+    destination = _make_destination_dataset(tmp_path / "destination")
+
+    save_episode_annotations(
+        dataset=source,
+        episode_index=0,
+        description="episode zero",
+        skills=[
+            SubtaskSegment(name="pick", start=0.0, end=0.2),
+            SubtaskSegment(name="place", start=0.2, end=0.4),
+        ],
+        allowed_names=["pick", "place"],
+    )
+
+    meta_dir = destination.root / "meta"
+    meta_dir.mkdir(parents=True, exist_ok=True)
+    (meta_dir / "info.json").write_text(
+        json.dumps(
+            {
+                "features": {
+                    "timestamp": {"dtype": "float32", "shape": [1], "names": None},
+                }
+            }
+        )
+    )
+    data_path = destination.root / "data/chunk-000/file-000.parquet"
+    data_path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(
+        {
+            "episode_index": [0, 0, 0, 0, 0],
+            "timestamp": [0.0, 0.1, 0.2, 0.3, 0.4],
+            "frame_index": [0, 1, 2, 3, 4],
+        }
+    ).to_parquet(data_path)
+
+    exported = export_subtask_annotations(
+        source_dataset=source,
+        destination_dataset=destination,
+        episode_mapping={0: 0},
+    )
+    materialize_subtask_index_feature(destination, exported)
+
+    info = json.loads((meta_dir / "info.json").read_text())
+    assert info["features"]["subtask_index"] == SUBTASK_INDEX_FEATURE
+    assert destination.meta.features["subtask_index"] == SUBTASK_INDEX_FEATURE
+
+    df = pd.read_parquet(data_path)
+    assert "subtask_index" in df.columns
+    assert df["subtask_index"].tolist() == [0, 0, 1, 1, 1]
 
 
 def test_sync_subtask_metadata_from_repo_fetches_missing_optional_files(tmp_path: Path):

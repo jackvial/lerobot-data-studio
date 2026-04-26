@@ -12,7 +12,7 @@ from lerobot.datasets.dataset_tools import _load_episode_with_stats, _write_parq
 from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
 from lerobot.datasets.utils import DEFAULT_DATA_PATH
 
-from .idle_trim import EpisodeTrimReport, report_episode_trim_from_bounds
+from .idle_trim import EpisodeTrimReport, exclusive_keep_time_range, report_episode_trim_from_bounds
 from .models import EpisodeTrimBounds
 from .video_codec import copy_videos_with_timestamps
 
@@ -227,7 +227,7 @@ def build_trimmed_dataset_with_copied_videos(
     )
 
     video_time_ranges = {
-        report.episode_id: (float(report.keep_start_time), float(report.keep_end_time))
+        report.episode_id: exclusive_keep_time_range(report, float(source.meta.fps))
         for report in reports
     }
     video_metadata = (

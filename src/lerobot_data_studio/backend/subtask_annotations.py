@@ -33,6 +33,12 @@ logger = logging.getLogger(__name__)
 
 SKILLS_FILENAME = "skills.json"
 SUBTASKS_FILENAME = "subtasks.parquet"
+SUBTASK_INDEX_FEATURE = {
+    "dtype": "int64",
+    "shape": [1],
+    "names": None,
+}
+_SUBTASK_TIMESTAMP_TOLERANCE_S = 1e-6
 
 
 def _meta_dir(dataset: LeRobotDataset) -> Path:
@@ -45,6 +51,10 @@ def _skills_path(dataset: LeRobotDataset) -> Path:
 
 def _subtasks_path(dataset: LeRobotDataset) -> Path:
     return _meta_dir(dataset) / SUBTASKS_FILENAME
+
+
+def _info_path(dataset: LeRobotDataset) -> Path:
+    return _meta_dir(dataset) / "info.json"
 
 
 def get_episode_duration(dataset: LeRobotDataset, episode_index: int) -> float:
@@ -387,6 +397,141 @@ def export_subtask_annotations(
     write_skills_json(destination_dataset, payload)
     write_subtasks_parquet(destination_dataset, payload.skill_to_subtask_index)
     return payload
+
+
+def _subtask_index_for_timestamp(
+    episode: EpisodeSubtaskAnnotations,
+    skill_to_subtask_index: Dict[str, int],
+    timestamp: float,
+) -> tuple[int | None, bool]:
+    """Return the subtask index for an episode-relative timestamp.
+
+    The boolean indicates whether the assignment used a tolerance-based gap fill
+    instead of a direct segment match.
+    """
+    skills = episode.skills
+    if not skills:
+        return None, False
+
+    for skill in skills:
+        if float(skill.start) <= timestamp < float(skill.end):
+            return skill_to_subtask_index.get(skill.name), False
+
+    last_skill = skills[-1]
+    if abs(timestamp - float(last_skill.end)) <= _SUBTASK_TIMESTAMP_TOLERANCE_S:
+        return skill_to_subtask_index.get(last_skill.name), False
+
+    nearest_skill: SubtaskSegment | None = None
+    nearest_distance = float("inf")
+    for skill in skills:
+        start = float(skill.start)
+        end = float(skill.end)
+        if timestamp < start:
+            distance = start - timestamp
+        elif timestamp > end:
+            distance = timestamp - end
+        else:
+            distance = 0.0
+        if distance < nearest_distance:
+            nearest_skill = skill
+            nearest_distance = distance
+
+    if nearest_skill is not None and nearest_distance <= _SUBTASK_TIMESTAMP_TOLERANCE_S:
+        return skill_to_subtask_index.get(nearest_skill.name), True
+
+    return None, False
+
+
+def _update_subtask_index_metadata(dataset: LeRobotDataset) -> None:
+    info_path = _info_path(dataset)
+    try:
+        info = json.loads(info_path.read_text())
+    except FileNotFoundError:
+        logger.warning("Cannot declare subtask_index feature because %s is missing", info_path)
+        info = None
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("Cannot update %s with subtask_index feature: %s", info_path, exc)
+        info = None
+
+    if info is not None:
+        features = info.setdefault("features", {})
+        if "subtask_index" not in features:
+            features["subtask_index"] = SUBTASK_INDEX_FEATURE.copy()
+            info_path.write_text(json.dumps(info, indent=2) + "\n")
+
+    meta = getattr(dataset, "meta", None)
+    features = getattr(meta, "features", None)
+    if features is not None and "subtask_index" not in features:
+        features["subtask_index"] = SUBTASK_INDEX_FEATURE.copy()
+
+    dataset_features = getattr(dataset, "features", None)
+    if dataset_features is not None and "subtask_index" not in dataset_features:
+        dataset_features["subtask_index"] = SUBTASK_INDEX_FEATURE.copy()
+
+
+def materialize_subtask_index_feature(
+    dataset: LeRobotDataset,
+    payload: Optional[SubtaskAnnotationsResponse],
+) -> None:
+    """Write exported subtask annotations into frame parquet and feature metadata."""
+    if payload is None or not payload.episodes:
+        return
+
+    _update_subtask_index_metadata(dataset)
+
+    data_root = Path(dataset.root) / "data"
+    parquet_paths = sorted(data_root.glob("*/*.parquet"))
+    if not parquet_paths:
+        logger.warning("No frame parquet files found under %s for subtask_index materialization", data_root)
+        return
+
+    for parquet_path in parquet_paths:
+        df = pd.read_parquet(parquet_path)
+        if "episode_index" not in df.columns or "timestamp" not in df.columns:
+            logger.warning("Skipping %s because it lacks episode_index or timestamp", parquet_path)
+            continue
+
+        subtask_indices: List[int] = []
+        gap_fill_count = 0
+        unassigned_count = 0
+        for row in df[["episode_index", "timestamp"]].itertuples(index=False):
+            episode_index = int(row.episode_index)
+            timestamp = float(row.timestamp)
+            episode = payload.episodes.get(str(episode_index))
+            if episode is None:
+                subtask_indices.append(-1)
+                unassigned_count += 1
+                continue
+
+            subtask_index, gap_filled = _subtask_index_for_timestamp(
+                episode,
+                payload.skill_to_subtask_index,
+                timestamp,
+            )
+            if subtask_index is None:
+                subtask_indices.append(-1)
+                unassigned_count += 1
+                continue
+
+            subtask_indices.append(int(subtask_index))
+            if gap_filled:
+                gap_fill_count += 1
+
+        if gap_fill_count:
+            logger.warning(
+                "Filled %d subtask_index timestamp gap(s) in %s using nearest skill",
+                gap_fill_count,
+                parquet_path,
+            )
+        if unassigned_count:
+            logger.warning(
+                "Assigned -1 subtask_index to %d frame(s) in %s without matching annotations",
+                unassigned_count,
+                parquet_path,
+            )
+
+        df["subtask_index"] = pd.Series(subtask_indices, dtype="int64", index=df.index)
+        df.to_parquet(parquet_path, engine="pyarrow", compression="snappy")
 
 
 def sync_subtask_metadata_from_repo(dataset: LeRobotDataset) -> None:
