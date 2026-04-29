@@ -33,6 +33,22 @@ init_logging()
 logger = logging.getLogger(__name__)
 
 
+def _maybe_scalar(value):
+    """Coerce optional metadata values that may be wrapped by parquet/numpy."""
+    if value is None:
+        return None
+    try:
+        if hasattr(value, "tolist"):
+            value = value.tolist()
+        if isinstance(value, (list, tuple)):
+            if not value:
+                return None
+            value = value[0]
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def check_repo_id(repo_id: str) -> None:
     """
     Validate that a repo_id follows the HuggingFace format: namespace/name.
@@ -183,14 +199,20 @@ async def get_episode(
         version=str(getattr(dataset.meta, "version", getattr(dataset.meta, "_version", None))),
     )
 
-    video_paths = [dataset.meta.get_video_file_path(episode_id, key) for key in dataset.meta.video_keys]
-    videos_info = [
-        VideoInfo(
-            url=f"/api/videos/{repo_id}/{str(video_path)}",
-            filename=f"{video_path.parent.parent.name} ({video_path.parent.name})",
+    episode_meta = dataset.meta.episodes[episode_id]
+    videos_info: list[VideoInfo] = []
+    for video_key in dataset.meta.video_keys:
+        video_path = dataset.meta.get_video_file_path(episode_id, video_key)
+        from_timestamp = _maybe_scalar(episode_meta.get(f"videos/{video_key}/from_timestamp"))
+        to_timestamp = _maybe_scalar(episode_meta.get(f"videos/{video_key}/to_timestamp"))
+        videos_info.append(
+            VideoInfo(
+                url=f"/api/videos/{repo_id}/{str(video_path)}",
+                filename=f"{video_path.parent.parent.name} ({video_path.parent.name})",
+                from_timestamp=from_timestamp,
+                to_timestamp=to_timestamp,
+            )
         )
-        for video_path in video_paths
-    ]
     tasks = dataset.meta.episodes[episode_id]["tasks"]
 
     if videos_info:

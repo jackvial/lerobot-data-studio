@@ -47,7 +47,7 @@ def get_episode_data(dataset: LeRobotDataset, episode_index: int):
                 episode_index=sample["episode_index"],
                 action=action_rounded,
                 observation=observation_rounded,
-                timestamp=round(float(sample["timestamp"]), 2),
+                timestamp=float(sample["timestamp"]),
             )
         )
 

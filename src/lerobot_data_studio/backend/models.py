@@ -15,6 +15,10 @@ class VideoInfo(BaseModel):
     url: str
     filename: str
     language_instruction: Optional[List[str]] = None
+    # v3 LeRobot datasets can pack multiple episodes into one mp4, so the
+    # frontend clamps playback to the per-episode slice when these are present.
+    from_timestamp: Optional[float] = None
+    to_timestamp: Optional[float] = None
 
 
 class EpisodeDataItem(BaseModel):
