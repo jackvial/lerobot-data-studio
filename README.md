@@ -69,6 +69,13 @@ Use the provided script to start both frontend and backend servers:
 ./run_dev.sh
 ```
 
+If you are downloading or creating a dataset and want to avoid backend restarts
+while editing code, run:
+
+```bash
+./run_dev.sh --no-backend-reload
+```
+
 ## Dataset Creation
 Dataset creation for filtered (AKA edited) datasets is always none destructive and will always create a new dataset and upload it to the Huggingface Hub.
 

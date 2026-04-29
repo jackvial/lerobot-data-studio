@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Layout,
@@ -17,12 +17,12 @@ import {
   QuestionCircleOutlined,
   HomeOutlined,
 } from '@ant-design/icons';
-import { useQuery, useMutation } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { datasetApi } from '@/services/api';
 import { useSelectedEpisodes } from '@/hooks/useSelectedEpisodes';
 import { useVideoPreloader } from '@/hooks/useVideoPreloader';
-import VideoPlayer from './VideoPlayer';
-import DataChart from './DataChart';
+import VideoPlayer, { VideoTimeUpdateOptions } from './VideoPlayer';
+import DataChart, { DataChartHandle } from './DataChart';
 import LoadingIndicator from './LoadingIndicator';
 import EpisodeSidebar from './EpisodeSidebar';
 import EpisodeIndexDisplay from './EpisodeIndexDisplay';
@@ -40,12 +40,15 @@ const DatasetViewer: React.FC = () => {
     episodeId?: string;
   }>();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [currentEpisodeId, setCurrentEpisodeId] = useState(
     episodeId ? parseInt(episodeId) : 0
   );
   const [isCreateModalVisible, setIsCreateModalVisible] = useState(false);
   const [isShortcutsModalVisible, setIsShortcutsModalVisible] = useState(false);
   const [currentVideoTime, setCurrentVideoTime] = useState(0);
+  const currentVideoTimeRef = useRef(0);
+  const dataChartRef = useRef<DataChartHandle | null>(null);
   const [creationTaskId, setCreationTaskId] = useState<string | null>(null);
   const [creationStatus, setCreationStatus] = useState<any>(null);
   const [showStatusModal, setShowStatusModal] = useState(false);
@@ -88,8 +91,16 @@ const DatasetViewer: React.FC = () => {
       ) {
         return 1000; // Poll every second while loading
       }
+      // Keep a lightweight heartbeat so backend reloads can recover without
+      // requiring a manual browser refresh.
+      if (currentStatus?.status === 'ready') {
+        return 5000;
+      }
       return false; // Stop polling when ready or error
     },
+    refetchIntervalInBackground: true,
+    refetchOnReconnect: true,
+    refetchOnWindowFocus: true,
   });
 
   // Load episode data only when dataset is ready
@@ -111,6 +122,16 @@ const DatasetViewer: React.FC = () => {
     staleTime: 5 * 60 * 1000, // Consider data fresh for 5 minutes
     gcTime: 10 * 60 * 1000, // Keep in cache for 10 minutes
   });
+
+  useEffect(() => {
+    if (!namespace || !name || (error as any)?.response?.status !== 202) {
+      return;
+    }
+
+    void queryClient.invalidateQueries({
+      queryKey: ['datasetStatus', namespace, name],
+    });
+  }, [error, name, namespace, queryClient]);
 
   // Get list of all episodes
   const { data: episodesList } = useQuery({
@@ -138,7 +159,20 @@ const DatasetViewer: React.FC = () => {
           setCreationTaskId(null);
           // Keep status to show the error in modal
         }
-      } catch (error) {
+      } catch (error: any) {
+        if (error?.response?.status === 404) {
+          setCreationTaskId(null);
+          setCreationStatus({
+            status: 'failed',
+            progress: 0,
+            message:
+              'The backend restarted while tracking this dataset creation. Start the creation again to continue.',
+          });
+          message.warning(
+            'Backend reloaded while creating the dataset, so progress tracking was reset.'
+          );
+          return;
+        }
         console.error('Error polling creation status:', error);
       }
     };
@@ -202,9 +236,30 @@ const DatasetViewer: React.FC = () => {
     getVideoUrl
   );
 
+  const paintPlaybackTime = useCallback((time: number) => {
+    dataChartRef.current?.setPlayhead(time);
+  }, []);
+
+  const handleVideoTimeUpdate = useCallback(
+    (time: number, options?: VideoTimeUpdateOptions) => {
+      currentVideoTimeRef.current = time;
+      paintPlaybackTime(time);
+      if (options?.force) {
+        setCurrentVideoTime(time);
+      }
+    },
+    [paintPlaybackTime]
+  );
+
   const handleEpisodeChange = (newEpisodeId: number) => {
     setCurrentEpisodeId(newEpisodeId);
   };
+
+  useEffect(() => {
+    currentVideoTimeRef.current = 0;
+    paintPlaybackTime(0);
+    setCurrentVideoTime(0);
+  }, [currentEpisodeId, paintPlaybackTime]);
 
   // Update URL when episode changes
   useEffect(() => {
@@ -447,10 +502,11 @@ const DatasetViewer: React.FC = () => {
               <VideoPlayer
                 videos={episodeData.videos_info}
                 episodeId={currentEpisodeId}
-                onTimeUpdate={setCurrentVideoTime}
+                onTimeUpdate={handleVideoTimeUpdate}
               />
 
               <DataChart
+                ref={dataChartRef}
                 episodeData={episodeData.episode_data}
                 featureNames={episodeData.feature_names}
                 currentTime={currentVideoTime}
