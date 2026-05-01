@@ -37,6 +37,9 @@ import DatasetCompletionModal from './DatasetCompletionModal';
 import SubtaskAnnotationPanel, {
   SubtaskAnnotationPanelHandle,
 } from './SubtaskAnnotationPanel';
+import CriticalSectionAnnotationPanel, {
+  CriticalSectionAnnotationPanelHandle,
+} from './CriticalSectionAnnotationPanel';
 import { createDatasetRequest } from '@/utils/createDataset';
 import { deriveEpisodeTrimFromIdleSpans } from '@/utils/episodeTiming';
 
@@ -60,6 +63,8 @@ const DatasetViewer: React.FC = () => {
   const currentVideoTimeRef = useRef(0);
   const videoPlayerRef = useRef<VideoPlayerHandle | null>(null);
   const subtaskPanelRef = useRef<SubtaskAnnotationPanelHandle | null>(null);
+  const criticalSectionPanelRef =
+    useRef<CriticalSectionAnnotationPanelHandle | null>(null);
   const idleTimelineRef = useRef<IdleTimelineHandle | null>(null);
   const dataChartRef = useRef<DataChartHandle | null>(null);
   const [idleThreshold, setIdleThreshold] = useState(0.5);
@@ -291,6 +296,7 @@ const DatasetViewer: React.FC = () => {
 
   const paintPlaybackTime = useCallback((time: number) => {
     subtaskPanelRef.current?.setPlayhead(time);
+    criticalSectionPanelRef.current?.setPlayhead(time);
     idleTimelineRef.current?.setPlayhead(time);
     dataChartRef.current?.setPlayhead(time);
   }, []);
@@ -612,6 +618,30 @@ const DatasetViewer: React.FC = () => {
 
               <SubtaskAnnotationPanel
                 ref={subtaskPanelRef}
+                namespace={namespace!}
+                name={name!}
+                datasetId={datasetId}
+                episodeId={currentEpisodeId}
+                episodeDuration={
+                  idleAnalysis?.episode_duration ??
+                  (episodeData.episode_data.length > 0
+                    ? Number(
+                        (
+                          episodeData.episode_data[
+                            episodeData.episode_data.length - 1
+                          ] as any
+                        ).timestamp ?? 0
+                      )
+                    : 0)
+                }
+                fps={episodeData.dataset_info.fps}
+                currentTime={currentVideoTime}
+                onSeek={handleVideoSeek}
+                getCurrentTime={getExactVideoTime}
+              />
+
+              <CriticalSectionAnnotationPanel
+                ref={criticalSectionPanelRef}
                 namespace={namespace!}
                 name={name!}
                 datasetId={datasetId}

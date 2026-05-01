@@ -120,3 +120,39 @@ export interface EpisodeSubtaskSummary {
 export interface SubtaskAnnotationsSummaryResponse {
   episodes: Record<number, EpisodeSubtaskSummary>;
 }
+
+export interface CriticalSection {
+  name: string;
+  start: number;
+  end: number;
+  weight: number;
+}
+
+export interface EpisodeCriticalSections {
+  episode_index: number;
+  sections: CriticalSection[];
+}
+
+export interface CriticalSectionsResponse {
+  default_label: string;
+  default_weight: number;
+  episodes: Record<string, EpisodeCriticalSections>;
+}
+
+export interface CriticalSectionLabelsResponse {
+  labels: string[];
+  default_weight: number;
+}
+
+export interface SaveCriticalSectionsRequest {
+  sections: CriticalSection[];
+}
+
+export interface EpisodeCriticalSectionSummary {
+  has_annotations: boolean;
+  section_count: number;
+}
+
+export interface CriticalSectionsSummaryResponse {
+  episodes: Record<number, EpisodeCriticalSectionSummary>;
+}

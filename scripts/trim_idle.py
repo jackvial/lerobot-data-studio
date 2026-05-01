@@ -1,5 +1,7 @@
 """CLI to bulk-trim leading/trailing idle frames from a LeRobotDataset.
 
+python scripts/trim_idle.py --repo-id jackvial/so101_pickplace_recap_pickplace_20260429_e20 --new-repo-id jackvial/so101_pickplace_recap_pickplace_20260429_e20_trimmed
+
 Usage:
     uv run python scripts/trim_idle.py \\
         --repo-id lerobot/svla_so100_sorting \\
@@ -39,9 +41,7 @@ def _parse_episodes(raw: str | None, num_episodes: int) -> list[int] | None:
             continue
         idx = int(chunk)
         if idx < 0 or idx >= num_episodes:
-            raise ValueError(
-                f"Episode index {idx} out of range [0, {num_episodes})"
-            )
+            raise ValueError(f"Episode index {idx} out of range [0, {num_episodes})")
         indices.append(idx)
     return indices
 

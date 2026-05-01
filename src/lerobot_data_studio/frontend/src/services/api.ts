@@ -1,5 +1,8 @@
 import axios from 'axios';
 import {
+  CriticalSectionLabelsResponse,
+  CriticalSectionsResponse,
+  CriticalSectionsSummaryResponse,
   DatasetListResponse,
   EpisodeData,
   CreateDatasetRequest,
@@ -7,6 +10,7 @@ import {
   DatasetLoadingStatus,
   CreateTaskStatus,
   IdleAnalysisResponse,
+  SaveCriticalSectionsRequest,
   SaveSubtaskAnnotationsRequest,
   SubtaskAnnotationsResponse,
   SubtaskAnnotationsSummaryResponse,
@@ -182,6 +186,50 @@ export const datasetApi = {
   ): Promise<SubtaskAnnotationsResponse> => {
     const response = await api.put<SubtaskAnnotationsResponse>(
       `/datasets/${namespace}/${name}/episodes/${episodeId}/subtasks`,
+      request
+    );
+    return response.data;
+  },
+
+  // Get the configured critical-section label list
+  getCriticalSectionLabels: async (): Promise<CriticalSectionLabelsResponse> => {
+    const response = await api.get<CriticalSectionLabelsResponse>(
+      '/critical-sections/labels'
+    );
+    return response.data;
+  },
+
+  // Get all critical-section annotations for a dataset
+  getCriticalSections: async (
+    namespace: string,
+    name: string
+  ): Promise<CriticalSectionsResponse> => {
+    const response = await api.get<CriticalSectionsResponse>(
+      `/datasets/${namespace}/${name}/critical-sections`
+    );
+    return response.data;
+  },
+
+  // Get per-episode critical-section summary used by the sidebar badges
+  getCriticalSectionsSummary: async (
+    namespace: string,
+    name: string
+  ): Promise<CriticalSectionsSummaryResponse> => {
+    const response = await api.get<CriticalSectionsSummaryResponse>(
+      `/datasets/${namespace}/${name}/critical-sections/summary`
+    );
+    return response.data;
+  },
+
+  // Save critical-section annotations for a single episode
+  saveCriticalSections: async (
+    namespace: string,
+    name: string,
+    episodeId: number,
+    request: SaveCriticalSectionsRequest
+  ): Promise<CriticalSectionsResponse> => {
+    const response = await api.put<CriticalSectionsResponse>(
+      `/datasets/${namespace}/${name}/episodes/${episodeId}/critical-sections`,
       request
     );
     return response.data;

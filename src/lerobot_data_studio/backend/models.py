@@ -155,3 +155,57 @@ class SubtaskAnnotationsSummaryResponse(BaseModel):
     """Per-episode annotation status used by the sidebar badges."""
 
     episodes: Dict[int, EpisodeSubtaskSummary] = Field(default_factory=dict)
+
+
+class CriticalSection(BaseModel):
+    """A weighted time range marking the important grasp/contact phase.
+
+    Range bounds are not strictly validated here so the persistence helper can
+    clamp out-of-range times against the actual episode duration. `weight` is
+    intended to drive training reweighting/oversampling and defaults to 5.0
+    when callers omit it.
+    """
+
+    name: str = "critical"
+    start: float
+    end: float
+    weight: float = 5.0
+
+
+class EpisodeCriticalSections(BaseModel):
+    """All critical sections for a single episode."""
+
+    episode_index: int
+    sections: List[CriticalSection] = Field(default_factory=list)
+
+
+class CriticalSectionLabelsResponse(BaseModel):
+    """Allowed critical-section labels served to the frontend radio."""
+
+    labels: List[str]
+    default_weight: float
+
+
+class CriticalSectionsResponse(BaseModel):
+    """Full `critical_sections.json` payload returned to the frontend."""
+
+    default_label: str = "critical"
+    default_weight: float = 5.0
+    episodes: Dict[str, EpisodeCriticalSections] = Field(default_factory=dict)
+
+
+class SaveCriticalSectionsRequest(BaseModel):
+    """Save payload for a single episode's critical sections."""
+
+    sections: List[CriticalSection] = Field(default_factory=list)
+
+
+class EpisodeCriticalSectionSummary(BaseModel):
+    has_annotations: bool
+    section_count: int
+
+
+class CriticalSectionsSummaryResponse(BaseModel):
+    """Per-episode critical-section status used by the sidebar badges."""
+
+    episodes: Dict[int, EpisodeCriticalSectionSummary] = Field(default_factory=dict)

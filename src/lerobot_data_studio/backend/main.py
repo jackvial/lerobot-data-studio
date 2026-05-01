@@ -14,11 +14,23 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.utils.utils import init_logging
 
 from .background_tasks import create_dataset_task, load_dataset_task
+from .critical_section_annotations import (
+    build_summary as build_critical_sections_summary,
+    load_critical_sections,
+    save_episode_critical_sections,
+)
+from .critical_section_config import (
+    DEFAULT_CRITICAL_WEIGHT,
+    get_critical_section_labels,
+)
 from .idle_analysis import IDLE_MIN_DURATION_SEC, IDLE_THRESHOLD, analyze_idle_time
 from .models import (
     CreateDatasetRequest,
     CreateDatasetResponse,
     CreateTaskStatus,
+    CriticalSectionLabelsResponse,
+    CriticalSectionsResponse,
+    CriticalSectionsSummaryResponse,
     DatasetInfo,
     DatasetListResponse,
     DatasetLoadingStatus,
@@ -26,6 +38,7 @@ from .models import (
     DatasetValidationResponse,
     EpisodeData,
     IdleAnalysisResponse,
+    SaveCriticalSectionsRequest,
     SaveSubtaskAnnotationsRequest,
     SubtaskAnnotationsResponse,
     SubtaskAnnotationsSummaryResponse,
@@ -373,6 +386,102 @@ async def save_subtask_annotations(
         episode_index=episode_id,
         description=request.description,
         skills=request.skills,
+        allowed_names=allowed_names,
+    )
+    return payload
+
+
+@app.get("/api/critical-sections/labels", response_model=CriticalSectionLabelsResponse)
+async def get_critical_section_labels_route():
+    """Return the configured critical-section labels and default weight."""
+    return CriticalSectionLabelsResponse(
+        labels=get_critical_section_labels(),
+        default_weight=DEFAULT_CRITICAL_WEIGHT,
+    )
+
+
+@app.get(
+    "/api/datasets/{dataset_namespace}/{dataset_name}/critical-sections",
+    response_model=CriticalSectionsResponse,
+)
+async def get_critical_sections(
+    dataset_namespace: str,
+    dataset_name: str,
+    state_store: StateStore = Depends(get_state_store),
+):
+    """Return the full `meta/critical_sections.json` payload for a dataset."""
+    repo_id = f"{dataset_namespace}/{dataset_name}"
+
+    if not state_store.is_dataset_cached(repo_id):
+        raise HTTPException(
+            status_code=http_status.HTTP_202_ACCEPTED,
+            detail="Dataset is not loaded. Please load it first.",
+        )
+
+    dataset = state_store.get_dataset(repo_id)
+    if not dataset:
+        raise HTTPException(status_code=404, detail=f"Dataset {repo_id} not found")
+
+    return load_critical_sections(dataset)
+
+
+@app.get(
+    "/api/datasets/{dataset_namespace}/{dataset_name}/critical-sections/summary",
+    response_model=CriticalSectionsSummaryResponse,
+)
+async def get_critical_sections_summary(
+    dataset_namespace: str,
+    dataset_name: str,
+    state_store: StateStore = Depends(get_state_store),
+):
+    """Per-episode critical-section presence used by the sidebar badges."""
+    repo_id = f"{dataset_namespace}/{dataset_name}"
+
+    if not state_store.is_dataset_cached(repo_id):
+        raise HTTPException(
+            status_code=http_status.HTTP_202_ACCEPTED,
+            detail="Dataset is not loaded. Please load it first.",
+        )
+
+    dataset = state_store.get_dataset(repo_id)
+    if not dataset:
+        raise HTTPException(status_code=404, detail=f"Dataset {repo_id} not found")
+
+    return build_critical_sections_summary(dataset)
+
+
+@app.put(
+    "/api/datasets/{dataset_namespace}/{dataset_name}/episodes/{episode_id}/critical-sections",
+    response_model=CriticalSectionsResponse,
+)
+async def save_critical_sections(
+    dataset_namespace: str,
+    dataset_name: str,
+    episode_id: int,
+    request: SaveCriticalSectionsRequest,
+    state_store: StateStore = Depends(get_state_store),
+):
+    """Persist critical sections for an episode, rewriting critical_sections.json."""
+    repo_id = f"{dataset_namespace}/{dataset_name}"
+
+    if not state_store.is_dataset_cached(repo_id):
+        raise HTTPException(
+            status_code=http_status.HTTP_202_ACCEPTED,
+            detail="Dataset is not loaded. Please load it first.",
+        )
+
+    dataset = state_store.get_dataset(repo_id)
+    if not dataset:
+        raise HTTPException(status_code=404, detail=f"Dataset {repo_id} not found")
+
+    if episode_id < 0 or episode_id >= dataset.num_episodes:
+        raise HTTPException(status_code=404, detail=f"Episode {episode_id} not found")
+
+    allowed_names = get_critical_section_labels()
+    payload, _ = save_episode_critical_sections(
+        dataset=dataset,
+        episode_index=episode_id,
+        sections=request.sections,
         allowed_names=allowed_names,
     )
     return payload
