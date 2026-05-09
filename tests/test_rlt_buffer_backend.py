@@ -16,7 +16,6 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 from lerobot_data_studio.backend import main as backend_main, rlt_buffer as rlt_buffer_module
-from lerobot_data_studio.backend.rlt_buffer import RltBufferStore
 
 
 def _make_jpeg(width: int = 32, height: int = 32, color: tuple[int, int, int] = (200, 100, 50)) -> bytes:
@@ -86,7 +85,6 @@ def _write_synthetic_buffer(path: Path) -> dict[str, bytes]:
 @pytest.fixture
 def rlt_buffer_root(tmp_path, monkeypatch):
     root = tmp_path / "rlt_review"
-    monkeypatch.setenv("LEROBOT_RLT_BUFFER_ROOT", str(root))
     # Reset the module-level singleton so each test sees a fresh cache. The
     # cache keys on resolved paths so leftover entries from prior tests under
     # different `tmp_path` would otherwise persist.
@@ -99,14 +97,19 @@ def client():
     return TestClient(backend_main.app)
 
 
+def _list_files(client, path: Path):
+    return client.get("/api/rlt_buffer/files", params={"path": str(path)})
+
+
 def test_list_files_returns_summary_for_each_pt_file(rlt_buffer_root, client):
     buffer_path = rlt_buffer_root / "run_a.pt"
     _write_synthetic_buffer(buffer_path)
 
-    response = client.get("/api/rlt_buffer/files")
+    response = _list_files(client, buffer_path)
     assert response.status_code == 200
     payload = response.json()
-    assert payload["root"].endswith("rlt_review")
+    assert payload["source_path"].endswith("run_a.pt")
+    assert payload["default_path"].endswith("rlt_online_replay.pt")
     assert len(payload["files"]) == 1
 
     file_info = payload["files"][0]
@@ -120,7 +123,7 @@ def test_episodes_endpoint_classifies_outcomes(rlt_buffer_root, client):
     buffer_path = rlt_buffer_root / "run_a.pt"
     _write_synthetic_buffer(buffer_path)
 
-    files = client.get("/api/rlt_buffer/files").json()["files"]
+    files = _list_files(client, buffer_path).json()["files"]
     token = files[0]["file_token"]
 
     response = client.get(f"/api/rlt_buffer/{token}/episodes")
@@ -130,6 +133,8 @@ def test_episodes_endpoint_classifies_outcomes(rlt_buffer_root, client):
 
     by_id = {e["episode_id"]: e for e in episodes}
     assert by_id[0]["label"] == "success"
+    assert by_id[0]["original_label"] == "success"
+    assert by_id[0]["deleted"] is False
     assert by_id[0]["num_transitions"] == 3
     assert by_id[0]["duration_s"] == pytest.approx(1.2, rel=1e-3)
     assert by_id[0]["has_intervention"] is False
@@ -144,7 +149,7 @@ def test_transitions_endpoint_returns_relative_offsets(rlt_buffer_root, client):
     buffer_path = rlt_buffer_root / "run_a.pt"
     _write_synthetic_buffer(buffer_path)
 
-    files = client.get("/api/rlt_buffer/files").json()["files"]
+    files = _list_files(client, buffer_path).json()["files"]
     token = files[0]["file_token"]
 
     response = client.get(f"/api/rlt_buffer/{token}/episodes/0/transitions")
@@ -163,7 +168,7 @@ def test_transition_image_endpoint_returns_jpeg(rlt_buffer_root, client):
     buffer_path = rlt_buffer_root / "run_a.pt"
     images = _write_synthetic_buffer(buffer_path)
 
-    files = client.get("/api/rlt_buffer/files").json()["files"]
+    files = _list_files(client, buffer_path).json()["files"]
     token = files[0]["file_token"]
     transitions = client.get(f"/api/rlt_buffer/{token}/episodes/0/transitions").json()["transitions"]
     sample_index = transitions[0]["index"]
@@ -181,7 +186,7 @@ def test_transition_image_endpoint_404_for_unknown_camera(rlt_buffer_root, clien
     buffer_path = rlt_buffer_root / "run_a.pt"
     _write_synthetic_buffer(buffer_path)
 
-    files = client.get("/api/rlt_buffer/files").json()["files"]
+    files = _list_files(client, buffer_path).json()["files"]
     token = files[0]["file_token"]
     transitions = client.get(f"/api/rlt_buffer/{token}/episodes/0/transitions").json()["transitions"]
     sample_index = transitions[0]["index"]
@@ -197,14 +202,53 @@ def test_invalid_token_rejected(rlt_buffer_root, client):
     assert response.status_code == 400
 
 
-def test_token_outside_root_rejected(rlt_buffer_root, client, tmp_path):
-    """A path token resolving outside the configured root should be rejected."""
+def test_explicit_file_path_can_be_loaded_outside_legacy_root(rlt_buffer_root, client, tmp_path):
+    """Users can enter an arbitrary local replay-buffer path."""
     outside = tmp_path / "outside.pt"
     _write_synthetic_buffer(outside)
 
-    token = RltBufferStore.encode_token(outside.resolve())
+    files_response = _list_files(client, outside)
+    assert files_response.status_code == 200
+    token = files_response.json()["files"][0]["file_token"]
     response = client.get(f"/api/rlt_buffer/{token}/episodes")
-    assert response.status_code == 400
+    assert response.status_code == 200
+
+
+def test_list_files_dedupes_same_resolved_path(rlt_buffer_root, client):
+    buffer_path = rlt_buffer_root / "run_a.pt"
+    _write_synthetic_buffer(buffer_path)
+    symlink_path = rlt_buffer_root / "also_run_a.pt"
+    symlink_path.symlink_to(buffer_path)
+
+    response = _list_files(client, rlt_buffer_root)
+    assert response.status_code == 200
+    files = response.json()["files"]
+    assert len(files) == 1
+    assert files[0]["path"].endswith("also_run_a.pt") or files[0]["path"].endswith("run_a.pt")
+
+
+def test_episode_review_overrides_label_and_deleted_state(rlt_buffer_root, client):
+    buffer_path = rlt_buffer_root / "run_a.pt"
+    _write_synthetic_buffer(buffer_path)
+
+    token = _list_files(client, buffer_path).json()["files"][0]["file_token"]
+    response = client.put(
+        f"/api/rlt_buffer/{token}/episodes/2/review",
+        json={"label": "success", "deleted": True},
+    )
+    assert response.status_code == 200
+    assert response.json()["label"] == "success"
+    assert response.json()["deleted"] is True
+
+    episodes = client.get(f"/api/rlt_buffer/{token}/episodes").json()["episodes"]
+    by_id = {e["episode_id"]: e for e in episodes}
+    assert by_id[2]["original_label"] == "open"
+    assert by_id[2]["label"] == "success"
+    assert by_id[2]["deleted"] is True
+
+    transitions = client.get(f"/api/rlt_buffer/{token}/episodes/2/transitions").json()["transitions"]
+    assert transitions[-1]["success"] is True
+    assert transitions[-1]["failure"] is False
 
 
 def test_legacy_v1_buffer_falls_back(rlt_buffer_root, client):
@@ -233,7 +277,7 @@ def test_legacy_v1_buffer_falls_back(rlt_buffer_root, client):
     legacy_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(state_dict, legacy_path)
 
-    files = client.get("/api/rlt_buffer/files").json()["files"]
+    files = _list_files(client, legacy_path).json()["files"]
     token = files[0]["file_token"]
     episodes = client.get(f"/api/rlt_buffer/{token}/episodes").json()["episodes"]
     # Two `done=True` markers should split the buffer into two episodes when

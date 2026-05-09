@@ -6,8 +6,11 @@ import {
   Card,
   Empty,
   Layout,
+  message,
+  Segmented,
   Space,
   Spin,
+  Switch,
   Tag,
   Typography,
   Slider,
@@ -19,9 +22,10 @@ import {
   StepBackwardOutlined,
   StepForwardOutlined,
 } from '@ant-design/icons';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { rltBufferApi } from '@/services/rltBufferApi';
 import { useRltEpisode } from '@/hooks/useRltEpisode';
+import { RltEpisodeLabel } from '@/types';
 import RltEpisodeSidebar from './RltEpisodeSidebar';
 import RltTimeline from './RltTimeline';
 import RltImagePane from './RltImagePane';
@@ -39,6 +43,7 @@ const RltBufferViewer: React.FC = () => {
   }>();
   const fileToken = encodedToken ? decodeURIComponent(encodedToken) : undefined;
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
 
   const {
     data: episodesData,
@@ -61,6 +66,11 @@ const RltBufferViewer: React.FC = () => {
     }
     return episodes[0]?.episode_id;
   }, [episodeId, episodes]);
+
+  const currentEpisode = useMemo(
+    () => episodes.find((episode) => episode.episode_id === currentEpisodeId),
+    [episodes, currentEpisodeId]
+  );
 
   // Bounce to the first episode when none is in the URL but we have data.
   useEffect(() => {
@@ -91,6 +101,76 @@ const RltBufferViewer: React.FC = () => {
     playbackSpeed,
     setPlaybackSpeed,
   } = useRltEpisode({ fileToken, episodeId: currentEpisodeId });
+
+  const saveReviewMutation = useMutation({
+    mutationFn: ({
+      label,
+      deleted,
+    }: {
+      label: RltEpisodeLabel;
+      deleted: boolean;
+    }) => {
+      if (!fileToken || currentEpisodeId === undefined) {
+        throw new Error('No RLT episode is selected');
+      }
+      return rltBufferApi.saveEpisodeReview(
+        fileToken,
+        currentEpisodeId,
+        label,
+        deleted
+      );
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: ['rlt-buffer-episodes', fileToken],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ['rlt-buffer-transitions', fileToken, currentEpisodeId],
+      });
+      message.success('Episode review saved');
+    },
+    onError: (err) => {
+      message.error(String((err as Error)?.message ?? err));
+    },
+  });
+
+  const saveEpisodeReview = (
+    next: Partial<{ label: RltEpisodeLabel; deleted: boolean }>
+  ) => {
+    if (!currentEpisode) {
+      return;
+    }
+    saveReviewMutation.mutate({
+      label: next.label ?? currentEpisode.label,
+      deleted: next.deleted ?? currentEpisode.deleted,
+    });
+  };
+
+  useEffect(() => {
+    const handleKeyPress = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (
+        e.repeat ||
+        (target &&
+          (target.tagName === 'INPUT' ||
+            target.tagName === 'TEXTAREA' ||
+            target.tagName === 'SELECT' ||
+            target.isContentEditable ||
+            target.closest(
+              "button, a, [role='button'], .ant-select, .ant-segmented, .ant-slider"
+            )))
+      ) {
+        return;
+      }
+      if (e.code === 'Space' || e.key === ' ') {
+        e.preventDefault();
+        setPlaying(!isPlaying);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyPress);
+    return () => window.removeEventListener('keydown', handleKeyPress);
+  }, [isPlaying, setPlaying]);
 
   const handleEpisodeClick = (newEpisodeId: number) => {
     if (!fileToken) {
@@ -152,7 +232,7 @@ const RltBufferViewer: React.FC = () => {
       </Header>
       <Layout>
         <Sider
-          width={320}
+          width={380}
           style={{ background: '#fff', borderRight: '1px solid #f0f0f0' }}
         >
           {episodesLoading ? (
@@ -188,7 +268,7 @@ const RltBufferViewer: React.FC = () => {
           ) : (
             <Space direction='vertical' size='middle' style={{ width: '100%' }}>
               <Card size='small'>
-                <Space wrap>
+                <Space wrap style={{ marginBottom: 12 }}>
                   <Button
                     icon={<StepBackwardOutlined />}
                     onClick={goPrev}
@@ -234,6 +314,44 @@ const RltBufferViewer: React.FC = () => {
                     </Text>
                   ) : null}
                 </Space>
+                {currentEpisode ? (
+                  <Space wrap style={{ width: '100%' }}>
+                    <Text strong>Outcome</Text>
+                    <Segmented
+                      value={currentEpisode.label}
+                      disabled={saveReviewMutation.isPending}
+                      options={[
+                        { label: 'Success', value: 'success' },
+                        { label: 'Failure', value: 'failure' },
+                        { label: 'Open', value: 'open' },
+                      ]}
+                      onChange={(value) =>
+                        saveEpisodeReview({ label: value as RltEpisodeLabel })
+                      }
+                    />
+                    {currentEpisode.label !== currentEpisode.original_label ? (
+                      <Tag color='purple'>
+                        was {currentEpisode.original_label}
+                      </Tag>
+                    ) : null}
+                    <Text strong style={{ marginLeft: 16 }}>
+                      Deleted
+                    </Text>
+                    <Switch
+                      checked={currentEpisode.deleted}
+                      disabled={saveReviewMutation.isPending}
+                      onChange={(checked) =>
+                        saveEpisodeReview({ deleted: checked })
+                      }
+                    />
+                    {currentEpisode.deleted ? (
+                      <Text type='secondary'>
+                        Soft-deleted; training can skip this episode via the
+                        review sidecar.
+                      </Text>
+                    ) : null}
+                  </Space>
+                ) : null}
                 <Slider
                   min={0}
                   max={Math.max(transitions.length - 1, 0)}

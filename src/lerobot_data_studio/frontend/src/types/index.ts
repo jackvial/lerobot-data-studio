@@ -168,7 +168,8 @@ export interface RltBufferFile {
 
 export interface RltBufferFilesResponse {
   files: RltBufferFile[];
-  root: string;
+  source_path: string;
+  default_path: string;
 }
 
 export type RltEpisodeLabel = 'success' | 'failure' | 'open';
@@ -178,6 +179,8 @@ export interface RltEpisodeSummary {
   num_transitions: number;
   duration_s: number;
   label: RltEpisodeLabel;
+  original_label: RltEpisodeLabel;
+  deleted: boolean;
   has_intervention: boolean;
   first_inference_ts: number | null;
 }
@@ -185,6 +188,18 @@ export interface RltEpisodeSummary {
 export interface RltEpisodesResponse {
   file_token: string;
   episodes: RltEpisodeSummary[];
+}
+
+export interface SaveRltEpisodeReviewRequest {
+  label: RltEpisodeLabel;
+  deleted: boolean;
+}
+
+export interface RltEpisodeReviewResponse {
+  file_token: string;
+  episode_id: number;
+  label: RltEpisodeLabel;
+  deleted: boolean;
 }
 
 export interface RltTransitionInfo {

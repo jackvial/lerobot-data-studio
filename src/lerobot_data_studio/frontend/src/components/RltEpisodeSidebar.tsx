@@ -60,7 +60,7 @@ const RltEpisodeSidebar: React.FC<RltEpisodeSidebarProps> = ({
         display: 'flex',
         flexDirection: 'column',
         padding: '16px',
-        width: '320px',
+        width: '380px',
       }}
     >
       <Title level={4} style={{ marginBottom: '16px' }}>
@@ -120,6 +120,7 @@ const RltEpisodeSidebar: React.FC<RltEpisodeSidebarProps> = ({
                       fontWeight: isCurrent ? 500 : 400,
                       color: isCurrent ? '#1890ff' : undefined,
                       minWidth: '90px',
+                      textDecoration: episode.deleted ? 'line-through' : 'none',
                     }}
                   >
                     Episode {episode.episode_id}
@@ -142,9 +143,20 @@ const RltEpisodeSidebar: React.FC<RltEpisodeSidebarProps> = ({
                       </Tag>
                     </Tooltip>
                   ) : null}
+                  {episode.deleted ? (
+                    <Tag color='default' style={{ marginInlineEnd: 0 }}>
+                      deleted
+                    </Tag>
+                  ) : null}
                   <Text
                     type='secondary'
-                    style={{ fontSize: '11px', marginLeft: 'auto' }}
+                    style={{
+                      fontSize: '11px',
+                      marginLeft: 'auto',
+                      whiteSpace: 'nowrap',
+                      minWidth: 76,
+                      textAlign: 'right',
+                    }}
                   >
                     {episode.num_transitions} • {episode.duration_s.toFixed(1)}s
                   </Text>

@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Card,
   Empty,
+  Input,
   List,
   Space,
   Spin,
@@ -21,6 +22,9 @@ import { rltBufferApi } from '@/services/rltBufferApi';
 import { RltBufferFile } from '@/types';
 
 const { Title, Text } = Typography;
+
+const DEFAULT_REPLAY_BUFFER_PATH =
+  '/home/jack/code/lerobot/outputs/rlt_tinypi05v2_online/rlt_online_replay.pt';
 
 const formatBytes = (bytes: number): string => {
   if (bytes < 1024) {
@@ -43,9 +47,11 @@ const formatMtime = (mtime: number): string => {
 
 const RltBufferHome: React.FC = () => {
   const navigate = useNavigate();
+  const [pathInput, setPathInput] = useState(DEFAULT_REPLAY_BUFFER_PATH);
+  const [submittedPath, setSubmittedPath] = useState(DEFAULT_REPLAY_BUFFER_PATH);
   const { data, isLoading, error, refetch, isRefetching } = useQuery({
-    queryKey: ['rlt-buffer-files'],
-    queryFn: rltBufferApi.listFiles,
+    queryKey: ['rlt-buffer-files', submittedPath],
+    queryFn: () => rltBufferApi.listFiles(submittedPath),
   });
 
   const handleOpen = (file: RltBufferFile) => {
@@ -87,17 +93,28 @@ const RltBufferHome: React.FC = () => {
           <Alert
             type='error'
             showIcon
-            message='Failed to load RLT buffer files'
+            message='Failed to load RLT buffer'
             description={String((error as Error)?.message ?? error)}
           />
         ) : null}
 
-        {data?.root ? (
-          <Text type='secondary'>
-            Scanning root: <Text code>{data.root}</Text> (override with
-            <Text code> LEROBOT_RLT_BUFFER_ROOT</Text>)
-          </Text>
-        ) : null}
+        <Card size='small'>
+          <Space direction='vertical' style={{ width: '100%' }}>
+            <Text strong>Replay buffer file or directory</Text>
+            <Input.Search
+              value={pathInput}
+              onChange={(e) => setPathInput(e.target.value)}
+              onSearch={(value) => setSubmittedPath(value.trim())}
+              enterButton='Load'
+              placeholder='Enter a local .pt replay buffer path or directory'
+            />
+            {data?.source_path ? (
+              <Text type='secondary'>
+                Loaded from <Text code>{data.source_path}</Text>
+              </Text>
+            ) : null}
+          </Space>
+        </Card>
 
         {isLoading ? (
           <div style={{ textAlign: 'center', padding: '40px' }}>
@@ -106,7 +123,7 @@ const RltBufferHome: React.FC = () => {
         ) : (
           <Card>
             {!data || data.files.length === 0 ? (
-              <Empty description='No RLT review buffers found under the configured root.' />
+              <Empty description='No readable RLT replay buffers found at this path.' />
             ) : (
               <List
                 dataSource={data.files}

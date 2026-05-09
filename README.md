@@ -76,6 +76,78 @@ while editing code, run:
 ./run_dev.sh --no-backend-reload
 ```
 
+## RLT Rollout Viewer
+
+The studio also ships a viewer for **RLT replay buffers** — the `.pt`
+files saved by the lerobot policy server when
+`rlt_review_capture_enabled` / `rlt_review_archive_path` are set on a DRTC
+collection run. The viewer groups transitions by episode, replays them at
+real wall-clock cadence using each transition's stored `inference_ts`, and
+shows the JPEG frames the policy actually saw alongside a per-action-dim
+chart.
+
+### Opening a replay buffer
+
+Start the app normally:
+
+```bash
+./run_dev.sh
+```
+
+Open <http://localhost:3000/rlt-buffer> (or click the **Open RLT Rollout
+Viewer** button on the home page). The replay-buffer path box is prefilled
+with:
+
+```text
+/home/jack/code/lerobot/outputs/rlt_tinypi05v2_online/rlt_online_replay.pt
+```
+
+Click **Load** to open that file, or paste any local `.pt` replay-buffer file
+or directory. If you enter a directory, the backend scans it for readable
+`**/*.pt` replay buffers and dedupes files that resolve to the same path.
+
+### What you'll see
+
+For `/home/jack/code/lerobot/outputs/rlt_tinypi05v2_online`, useful files
+include:
+
+| File | Purpose |
+| --- | --- |
+| `rlt_review_archive.pt` | Append-only review archive — open this one. |
+| `rlt_online_replay.pt` | Training replay buffer — also viewable but bounded by the buffer's capacity (older transitions get evicted). |
+| `rlt_head_*.pt` | RLT head checkpoints — these are model weights, not replay buffers, and will be skipped with a log warning. |
+
+Click `rlt_review_archive.pt` and pick an episode in the sidebar. Each
+episode is tagged `success`, `failure`, or `open`, and an `intv` chip marks
+episodes that contained a human intervention.
+
+### Inside an episode
+
+- **Timeline** — one tick per transition. The horizontal position is
+  proportional to the stored `t_offset_s` (the wall-clock time relative to
+  the first inference of the episode), so visually irregular spacing is
+  honest.
+- **Play / Pause / Speed** — playback advances by wall-clock: at `1.0x` the
+  viewer sleeps for the real `Δt` between adjacent transitions. Lower the
+  speed to slow down dense regions, raise it to skim. Press **Space** to
+  play/pause.
+- **Cameras** — one image per stored camera key (e.g.
+  `observation.images.front`, `observation.images.wrist`). JPEGs are streamed
+  on demand; nothing is decoded into memory until you scrub to a transition.
+- **Action summary** — mean per action-dim across the executed chunk for
+  each transition. Click a point to jump the timeline to that transition.
+- **Review controls** — change an episode's outcome to `success`, `failure`,
+  or `open`, and mark episodes as soft-deleted. These edits are written to a
+  sidecar file next to the replay buffer, e.g.
+  `rlt_online_replay.review.json`; the original `.pt` is not modified.
+
+### Legacy / partial buffers
+
+Buffers written before the v2 schema landed (or transitions where the JPEG
+encoder lagged) still load. When `inference_ts` is missing for an episode,
+the timeline falls back to even spacing and shows a small `fallback spacing`
+warning chip.
+
 ## Dataset Creation
 Dataset creation for filtered (AKA edited) datasets is always none destructive and will always create a new dataset and upload it to the Huggingface Hub.
 

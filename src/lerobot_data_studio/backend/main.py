@@ -41,11 +41,13 @@ from .models import (
     IdleAnalysisResponse,
     RltBufferFile,
     RltBufferFilesResponse,
+    RltEpisodeReviewResponse,
     RltEpisodesResponse,
     RltEpisodeSummary,
     RltTransitionInfo,
     RltTransitionsResponse,
     SaveCriticalSectionsRequest,
+    SaveRltEpisodeReviewRequest,
     SaveSubtaskAnnotationsRequest,
     SubtaskAnnotationsResponse,
     SubtaskAnnotationsSummaryResponse,
@@ -53,13 +55,16 @@ from .models import (
     VideoInfo,
 )
 from .rlt_buffer import (
+    EpisodeReview,
     RltBufferStore,
     build_transition_info,
     episode_duration_seconds,
     episode_label,
-    get_buffer_root,
+    get_default_buffer_path,
     get_rlt_buffer_store,
-    list_buffer_files,
+    load_episode_reviews,
+    resolve_buffer_selection,
+    save_episode_review,
 )
 from .state_store import StateStore, get_state_store
 from .subtask_annotations import (
@@ -688,45 +693,60 @@ def _rlt_store_dep() -> RltBufferStore:
     return get_rlt_buffer_store()
 
 
-def _resolve_rlt_path(token: str, store: RltBufferStore) -> tuple[Path, Path]:
-    root = get_buffer_root()
+def _resolve_rlt_path(token: str, store: RltBufferStore) -> Path:
     try:
-        path = store.resolve_token(token, root)
+        path = store.resolve_token(token)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except PermissionError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return path, root
+    return path
 
 
 @app.get("/api/rlt_buffer/files", response_model=RltBufferFilesResponse)
-async def list_rlt_buffer_files(store: RltBufferStore = Depends(_rlt_store_dep)):
-    """List `.pt` review-buffer files under the configured root."""
-    root = get_buffer_root()
+async def list_rlt_buffer_files(
+    store: RltBufferStore = Depends(_rlt_store_dep),
+    path: str | None = Query(None, description="Local replay-buffer .pt file or directory"),
+):
+    """List one replay-buffer file or readable `.pt` buffers under a directory."""
+    try:
+        source_path, candidate_files = resolve_buffer_selection(path)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     files: list[RltBufferFile] = []
-    for path in list_buffer_files(root):
+    seen_tokens: set[str] = set()
+    for buffer_path in candidate_files:
         try:
-            stat = path.stat()
+            stat = buffer_path.stat()
         except OSError:
             continue
         try:
-            buffer = store.get(path)
+            buffer = store.get(buffer_path)
         except (RuntimeError, ValueError) as exc:
-            logger.warning("Skipping unreadable RLT buffer %s: %s", path, exc)
+            logger.warning("Skipping unreadable RLT buffer %s: %s", buffer_path, exc)
             continue
+        file_token = RltBufferStore.encode_token(buffer_path.resolve())
+        if file_token in seen_tokens:
+            continue
+        seen_tokens.add(file_token)
         files.append(
             RltBufferFile(
-                file_token=RltBufferStore.encode_token(path.resolve()),
-                path=str(path),
+                file_token=file_token,
+                path=str(buffer_path),
                 size_bytes=stat.st_size,
                 mtime=stat.st_mtime,
                 num_samples=buffer.num_samples,
                 num_episodes=buffer.num_episodes,
             )
         )
-    return RltBufferFilesResponse(files=files, root=str(root))
+    return RltBufferFilesResponse(
+        files=files,
+        source_path=str(source_path),
+        default_path=str(get_default_buffer_path()),
+    )
 
 
 @app.get("/api/rlt_buffer/{file_token}/episodes", response_model=RltEpisodesResponse)
@@ -735,8 +755,9 @@ async def list_rlt_buffer_episodes(
     store: RltBufferStore = Depends(_rlt_store_dep),
 ):
     """Return per-episode summaries used by the viewer sidebar."""
-    path, _ = _resolve_rlt_path(file_token, store)
+    path = _resolve_rlt_path(file_token, store)
     buffer = store.get(path)
+    reviews = load_episode_reviews(path)
 
     episodes: list[RltEpisodeSummary] = []
     for episode_id, indices in sorted(buffer.episode_indices.items()):
@@ -747,17 +768,47 @@ async def list_rlt_buffer_episodes(
                 first_ts = ts
                 break
         has_intervention = any(buffer.samples[i].is_intervention for i in indices)
+        original_label = episode_label(buffer.samples, indices)
+        review = reviews.get(episode_id, EpisodeReview())
         episodes.append(
             RltEpisodeSummary(
                 episode_id=episode_id,
                 num_transitions=len(indices),
                 duration_s=episode_duration_seconds(buffer.samples, indices),
-                label=episode_label(buffer.samples, indices),
+                label=review.label or original_label,
+                original_label=original_label,
+                deleted=review.deleted,
                 has_intervention=has_intervention,
                 first_inference_ts=first_ts,
             )
         )
     return RltEpisodesResponse(file_token=file_token, episodes=episodes)
+
+
+@app.put("/api/rlt_buffer/{file_token}/episodes/{episode_id}/review", response_model=RltEpisodeReviewResponse)
+async def save_rlt_buffer_episode_review(
+    file_token: str,
+    episode_id: int,
+    request: SaveRltEpisodeReviewRequest,
+    store: RltBufferStore = Depends(_rlt_store_dep),
+):
+    """Persist user review metadata for one episode in a sidecar JSON file."""
+    path = _resolve_rlt_path(file_token, store)
+    buffer = store.get(path)
+    if episode_id not in buffer.episode_indices:
+        raise HTTPException(status_code=404, detail=f"Episode {episode_id} not found")
+
+    review = save_episode_review(
+        path,
+        episode_id,
+        EpisodeReview(label=request.label, deleted=request.deleted),
+    )
+    return RltEpisodeReviewResponse(
+        file_token=file_token,
+        episode_id=episode_id,
+        label=review.label or "open",
+        deleted=review.deleted,
+    )
 
 
 @app.get(
@@ -770,7 +821,7 @@ async def list_rlt_buffer_transitions(
     store: RltBufferStore = Depends(_rlt_store_dep),
 ):
     """Return ordered transition metadata for one episode."""
-    path, _ = _resolve_rlt_path(file_token, store)
+    path = _resolve_rlt_path(file_token, store)
     buffer = store.get(path)
 
     indices = buffer.episode_indices.get(episode_id)
@@ -778,6 +829,15 @@ async def list_rlt_buffer_transitions(
         raise HTTPException(status_code=404, detail=f"Episode {episode_id} not found")
 
     payload, has_inference_ts = build_transition_info(buffer.samples, indices)
+    review = load_episode_reviews(path).get(episode_id)
+    if review and review.label in {"success", "failure", "open"} and payload:
+        for transition in payload:
+            transition["success"] = False
+            transition["failure"] = False
+        if review.label == "success":
+            payload[-1]["success"] = True
+        elif review.label == "failure":
+            payload[-1]["failure"] = True
     transitions = [RltTransitionInfo(**item) for item in payload]
     return RltTransitionsResponse(
         file_token=file_token,
@@ -795,7 +855,7 @@ async def get_rlt_buffer_transition_image(
     store: RltBufferStore = Depends(_rlt_store_dep),
 ):
     """Serve the JPEG bytes for one camera at one transition."""
-    path, _ = _resolve_rlt_path(file_token, store)
+    path = _resolve_rlt_path(file_token, store)
     buffer = store.get(path)
 
     if idx < 0 or idx >= len(buffer.samples):

@@ -19,6 +19,7 @@ lerobot version that wrote them — we only need to ``torch.load`` the dict.
 from __future__ import annotations
 
 import base64
+import json
 import logging
 import os
 import threading
@@ -32,14 +33,20 @@ import torch
 logger = logging.getLogger(__name__)
 
 
+DEFAULT_BUFFER_PATH = "/home/jack/code/lerobot/outputs/rlt_tinypi05v2_online/rlt_online_replay.pt"
 DEFAULT_BUFFER_ROOT_ENV = "LEROBOT_RLT_BUFFER_ROOT"
 DEFAULT_BUFFER_ROOT = "outputs/rlt_review"
 MAX_LOADED_BUFFERS = 4
 
 
 def get_buffer_root() -> Path:
+    """Legacy fallback root used when no explicit path is supplied."""
     root = os.environ.get(DEFAULT_BUFFER_ROOT_ENV, DEFAULT_BUFFER_ROOT)
     return Path(root).expanduser().resolve()
+
+
+def get_default_buffer_path() -> Path:
+    return Path(DEFAULT_BUFFER_PATH).expanduser().resolve()
 
 
 @dataclass
@@ -80,6 +87,14 @@ class LoadedBuffer:
         return len(self.episode_indices)
 
 
+@dataclass
+class EpisodeReview:
+    """User-maintained review metadata stored outside the replay buffer."""
+
+    label: str | None = None
+    deleted: bool = False
+
+
 class RltBufferStore:
     """LRU cache of loaded `.pt` review buffers keyed by resolved path.
 
@@ -106,16 +121,12 @@ class RltBufferStore:
             raise ValueError(f"Invalid file token: {token}") from exc
         return Path(decoded)
 
-    def resolve_token(self, token: str, root: Path) -> Path:
+    def resolve_token(self, token: str) -> Path:
         candidate = self.decode_token(token).resolve()
-        try:
-            candidate.relative_to(root)
-        except ValueError as exc:
-            raise PermissionError(
-                f"Resolved path {candidate} is outside the configured RLT buffer root {root}"
-            ) from exc
         if not candidate.exists():
             raise FileNotFoundError(f"RLT buffer file not found: {candidate}")
+        if not candidate.is_file() or candidate.suffix != ".pt":
+            raise ValueError(f"RLT buffer token does not resolve to a .pt file: {candidate}")
         return candidate
 
     def get(self, path: Path) -> LoadedBuffer:
@@ -153,7 +164,104 @@ def get_rlt_buffer_store() -> RltBufferStore:
 def list_buffer_files(root: Path) -> list[Path]:
     if not root.exists():
         return []
-    return sorted(p for p in root.glob("**/*.pt") if p.is_file())
+    seen: set[Path] = set()
+    files: list[Path] = []
+    for path in sorted(root.glob("**/*.pt")):
+        if not path.is_file():
+            continue
+        resolved = path.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        files.append(path)
+    return files
+
+
+def resolve_buffer_selection(path_value: str | None = None) -> tuple[Path, list[Path]]:
+    """Resolve a user-entered replay-buffer file or directory.
+
+    If the path is a file, the response contains exactly that file. If it is a
+    directory, all `**/*.pt` files below it are returned with resolved-path
+    dedupe. When omitted, prefer the tinypi05v2 default replay file and fall
+    back to the legacy env/root scan if the file is not present.
+    """
+
+    if path_value:
+        source = Path(path_value).expanduser().resolve()
+    else:
+        default_file = get_default_buffer_path()
+        if default_file.exists():
+            source = default_file
+        else:
+            source = get_buffer_root()
+
+    if not source.exists():
+        raise FileNotFoundError(f"RLT buffer path not found: {source}")
+    if source.is_file():
+        if source.suffix != ".pt":
+            raise ValueError(f"RLT buffer file must end with .pt: {source}")
+        return source, [source]
+    if source.is_dir():
+        return source, list_buffer_files(source)
+    raise ValueError(f"RLT buffer path must be a file or directory: {source}")
+
+
+def review_path_for_buffer(path: Path) -> Path:
+    return path.with_suffix(".review.json")
+
+
+def load_episode_reviews(path: Path) -> dict[int, EpisodeReview]:
+    review_path = review_path_for_buffer(path)
+    if not review_path.exists():
+        return {}
+    try:
+        with review_path.open("r", encoding="utf-8") as f:
+            payload = json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("Could not load RLT review metadata %s: %s", review_path, exc)
+        return {}
+
+    raw_episodes = payload.get("episodes", {}) if isinstance(payload, dict) else {}
+    reviews: dict[int, EpisodeReview] = {}
+    if not isinstance(raw_episodes, dict):
+        return reviews
+    for raw_episode_id, raw_review in raw_episodes.items():
+        try:
+            episode_id = int(raw_episode_id)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(raw_review, dict):
+            continue
+        label = raw_review.get("label")
+        if label not in {"success", "failure", "open", None}:
+            label = None
+        reviews[episode_id] = EpisodeReview(
+            label=label,
+            deleted=bool(raw_review.get("deleted", False)),
+        )
+    return reviews
+
+
+def save_episode_review(path: Path, episode_id: int, review: EpisodeReview) -> EpisodeReview:
+    reviews = load_episode_reviews(path)
+    reviews[episode_id] = review
+    review_path = review_path_for_buffer(path)
+    payload = {
+        "version": 1,
+        "buffer_path": str(path.resolve()),
+        "episodes": {
+            str(ep_id): {
+                "label": ep_review.label,
+                "deleted": ep_review.deleted,
+            }
+            for ep_id, ep_review in sorted(reviews.items())
+        },
+    }
+    review_path.parent.mkdir(parents=True, exist_ok=True)
+    with review_path.open("w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2, sort_keys=True)
+        f.write("\n")
+    return review
 
 
 def _coerce_optional_int(value: Any) -> int | None:

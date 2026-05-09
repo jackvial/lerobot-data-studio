@@ -224,7 +224,8 @@ class RltBufferFile(BaseModel):
 
 class RltBufferFilesResponse(BaseModel):
     files: List[RltBufferFile]
-    root: str
+    source_path: str
+    default_path: str
 
 
 class RltEpisodeSummary(BaseModel):
@@ -234,6 +235,8 @@ class RltEpisodeSummary(BaseModel):
     num_transitions: int
     duration_s: float
     label: Literal["success", "failure", "open"]
+    original_label: Literal["success", "failure", "open"]
+    deleted: bool = False
     has_intervention: bool
     first_inference_ts: Optional[float] = None
 
@@ -241,6 +244,18 @@ class RltEpisodeSummary(BaseModel):
 class RltEpisodesResponse(BaseModel):
     file_token: str
     episodes: List[RltEpisodeSummary]
+
+
+class SaveRltEpisodeReviewRequest(BaseModel):
+    label: Literal["success", "failure", "open"]
+    deleted: bool = False
+
+
+class RltEpisodeReviewResponse(BaseModel):
+    file_token: str
+    episode_id: int
+    label: Literal["success", "failure", "open"]
+    deleted: bool
 
 
 class RltTransitionInfo(BaseModel):

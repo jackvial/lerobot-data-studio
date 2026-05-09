@@ -1,5 +1,7 @@
 import axios from 'axios';
 import {
+  RltEpisodeLabel,
+  RltEpisodeReviewResponse,
   RltBufferFilesResponse,
   RltEpisodesResponse,
   RltTransitionsResponse,
@@ -14,8 +16,10 @@ const api = axios.create({
 });
 
 export const rltBufferApi = {
-  listFiles: async (): Promise<RltBufferFilesResponse> => {
-    const response = await api.get<RltBufferFilesResponse>('/rlt_buffer/files');
+  listFiles: async (path?: string): Promise<RltBufferFilesResponse> => {
+    const response = await api.get<RltBufferFilesResponse>('/rlt_buffer/files', {
+      params: path ? { path } : undefined,
+    });
     return response.data;
   },
 
@@ -32,6 +36,19 @@ export const rltBufferApi = {
   ): Promise<RltTransitionsResponse> => {
     const response = await api.get<RltTransitionsResponse>(
       `/rlt_buffer/${encodeURIComponent(fileToken)}/episodes/${episodeId}/transitions`
+    );
+    return response.data;
+  },
+
+  saveEpisodeReview: async (
+    fileToken: string,
+    episodeId: number,
+    label: RltEpisodeLabel,
+    deleted: boolean
+  ): Promise<RltEpisodeReviewResponse> => {
+    const response = await api.put<RltEpisodeReviewResponse>(
+      `/rlt_buffer/${encodeURIComponent(fileToken)}/episodes/${episodeId}/review`,
+      { label, deleted }
     );
     return response.data;
   },
