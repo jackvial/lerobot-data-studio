@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -209,3 +209,57 @@ class CriticalSectionsSummaryResponse(BaseModel):
     """Per-episode critical-section status used by the sidebar badges."""
 
     episodes: Dict[int, EpisodeCriticalSectionSummary] = Field(default_factory=dict)
+
+
+class RltBufferFile(BaseModel):
+    """Summary of a saved RLT replay buffer `.pt` file."""
+
+    file_token: str
+    path: str
+    size_bytes: int
+    mtime: float
+    num_samples: int
+    num_episodes: int
+
+
+class RltBufferFilesResponse(BaseModel):
+    files: List[RltBufferFile]
+    root: str
+
+
+class RltEpisodeSummary(BaseModel):
+    """Per-episode summary for the RLT buffer viewer sidebar."""
+
+    episode_id: int
+    num_transitions: int
+    duration_s: float
+    label: Literal["success", "failure", "open"]
+    has_intervention: bool
+    first_inference_ts: Optional[float] = None
+
+
+class RltEpisodesResponse(BaseModel):
+    file_token: str
+    episodes: List[RltEpisodeSummary]
+
+
+class RltTransitionInfo(BaseModel):
+    """One inference transition inside an episode."""
+
+    index: int
+    ts: Optional[float] = None
+    t_offset_s: float
+    action_summary: List[float] = Field(default_factory=list)
+    reward: float
+    done: bool
+    success: bool
+    failure: bool
+    is_intervention: bool
+    image_keys: List[str] = Field(default_factory=list)
+
+
+class RltTransitionsResponse(BaseModel):
+    file_token: str
+    episode_id: int
+    transitions: List[RltTransitionInfo]
+    has_inference_ts: bool

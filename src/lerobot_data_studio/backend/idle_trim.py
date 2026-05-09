@@ -32,12 +32,17 @@ class EpisodeTrimReport:
     trailing_dropped: int
     skipped: bool = False
     skip_reason: Optional[str] = None
+    # Set when we had to truncate the kept range at build time (e.g. because the
+    # source video had fewer frames than its parquet metadata claimed).
+    truncated_to: Optional[int] = None
+    truncation_reason: Optional[str] = None
 
     @property
     def kept_frames(self) -> int:
         if self.skipped:
             return 0
-        return self.keep_end - self.keep_start + 1
+        effective_end = self.truncated_to if self.truncated_to is not None else self.keep_end
+        return effective_end - self.keep_start + 1
 
 
 def exclusive_keep_time_range(report: EpisodeTrimReport, fps: float) -> tuple[float, float]:
@@ -278,13 +283,51 @@ def _build_dataset_from_reports(
             report.trailing_dropped,
         )
 
+        last_local_idx_added: Optional[int] = None
+        decode_error: Optional[BaseException] = None
         for global_idx in range(from_idx + report.keep_start, from_idx + report.keep_end + 1):
-            sample = source[int(global_idx)]
+            local_idx = int(global_idx) - from_idx
+            try:
+                sample = source[int(global_idx)]
+            except (RuntimeError, IndexError) as err:
+                # The source video can be shorter than the parquet metadata
+                # claims (corrupt/truncated source). Stop reading this episode
+                # at the last frame we successfully decoded rather than aborting
+                # the entire trim job.
+                decode_error = err
+                break
             frame = _frame_for_add(sample, feature_keys, task)
             for image_key in image_keys:
                 if image_key in frame and isinstance(frame[image_key], torch.Tensor):
                     frame[image_key] = _convert_image_tensor(frame[image_key])
             new_dataset.add_frame(frame)
+            last_local_idx_added = local_idx
+
+        if decode_error is not None:
+            if last_local_idx_added is None or last_local_idx_added < report.keep_start + 1:
+                logger.warning(
+                    "ep %d: decode failed before reaching 2 frames (%s); discarding episode.",
+                    report.episode_id,
+                    decode_error,
+                )
+                new_dataset.clear_episode_buffer(delete_images=len(image_keys) > 0)
+                report.skipped = True
+                report.skip_reason = f"decode error before 2 frames: {decode_error}"
+                report.truncated_to = last_local_idx_added
+                report.truncation_reason = str(decode_error)
+                continue
+            logger.warning(
+                "ep %d: decode error at frame %d (%s); truncating kept range to %d..%d.",
+                report.episode_id,
+                (last_local_idx_added + 1) if last_local_idx_added is not None else report.keep_start,
+                decode_error,
+                report.keep_start,
+                last_local_idx_added,
+            )
+            report.truncated_to = last_local_idx_added
+            report.truncation_reason = str(decode_error)
+            report.trailing_dropped = (report.n_frames - 1) - last_local_idx_added
+
         new_dataset.save_episode()
 
     new_dataset.finalize()

@@ -156,3 +156,53 @@ export interface EpisodeCriticalSectionSummary {
 export interface CriticalSectionsSummaryResponse {
   episodes: Record<number, EpisodeCriticalSectionSummary>;
 }
+
+export interface RltBufferFile {
+  file_token: string;
+  path: string;
+  size_bytes: number;
+  mtime: number;
+  num_samples: number;
+  num_episodes: number;
+}
+
+export interface RltBufferFilesResponse {
+  files: RltBufferFile[];
+  root: string;
+}
+
+export type RltEpisodeLabel = 'success' | 'failure' | 'open';
+
+export interface RltEpisodeSummary {
+  episode_id: number;
+  num_transitions: number;
+  duration_s: number;
+  label: RltEpisodeLabel;
+  has_intervention: boolean;
+  first_inference_ts: number | null;
+}
+
+export interface RltEpisodesResponse {
+  file_token: string;
+  episodes: RltEpisodeSummary[];
+}
+
+export interface RltTransitionInfo {
+  index: number;
+  ts: number | null;
+  t_offset_s: number;
+  action_summary: number[];
+  reward: number;
+  done: boolean;
+  success: boolean;
+  failure: boolean;
+  is_intervention: boolean;
+  image_keys: string[];
+}
+
+export interface RltTransitionsResponse {
+  file_token: string;
+  episode_id: number;
+  transitions: RltTransitionInfo[];
+  has_inference_ts: boolean;
+}

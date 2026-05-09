@@ -6,6 +6,7 @@ import {
   RobotOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
+  ExperimentOutlined,
 } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
 import { datasetApi } from '@/services/api';
@@ -125,6 +126,26 @@ const HomePage: React.FC = () => {
           <Title level={1}>LeRobot Data Studio</Title>
           <Title level={4}>The Unofficial LeRobot Dataset Editor</Title>
           <Title level={2}>Edit LeRobot Datasets</Title>
+        </div>
+
+        <div>
+          <Title level={2}>RLT Rollout Viewer</Title>
+          <Text
+            type='secondary'
+            style={{ fontSize: '16px', display: 'block', marginBottom: '16px' }}
+          >
+            Inspect saved RLT review buffers (.pt) produced by the policy
+            server.
+          </Text>
+          <Card>
+            <Button
+              type='primary'
+              icon={<ExperimentOutlined />}
+              onClick={() => navigate('/rlt-buffer')}
+            >
+              Open RLT Rollout Viewer
+            </Button>
+          </Card>
         </div>
 
         <div>

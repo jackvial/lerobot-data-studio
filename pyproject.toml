@@ -52,6 +52,8 @@ dev = [
     "types-requests>=2.31.0",
     "types-psutil>=5.9.5",
     "pandas-stubs>=2.1.4",
+    "httpx>=0.27.0",
+    "pillow>=10.0.0",
 ]
 
 [tool.ruff]

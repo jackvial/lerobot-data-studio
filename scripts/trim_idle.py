@@ -1,6 +1,8 @@
 """CLI to bulk-trim leading/trailing idle frames from a LeRobotDataset.
 
 python scripts/trim_idle.py --repo-id jackvial/so101_pickplace_recap_pickplace_20260429_e20 --new-repo-id jackvial/so101_pickplace_recap_pickplace_20260429_e20_trimmed
+python scripts/trim_idle.py --repo-id jackvial/jackvial/so101_pickplace_failrecv20_0 --new-repo-id jackvial/jackvial/so101_pickplace_failrecv20_0_trimmed
+
 
 Usage:
     uv run python scripts/trim_idle.py \\
@@ -53,12 +55,16 @@ def _format_report_line(report: EpisodeTrimReport, fps: float) -> str:
             f"n_frames={report.n_frames}, leading={report.leading_dropped}, "
             f"trailing={report.trailing_dropped}"
         )
-    return (
-        f"ep {report.episode_id:>4}: kept frames {report.keep_start}..{report.keep_end} "
+    effective_end = report.truncated_to if report.truncated_to is not None else report.keep_end
+    line = (
+        f"ep {report.episode_id:>4}: kept frames {report.keep_start}..{effective_end} "
         f"of 0..{report.n_frames - 1}, dropped "
         f"{report.leading_dropped} leading + {report.trailing_dropped} trailing "
         f"({report.leading_dropped / fps:.2f}s + {report.trailing_dropped / fps:.2f}s @ {fps:g}fps)"
     )
+    if report.truncated_to is not None:
+        line += f" [TRUNCATED at frame {report.truncated_to}: {report.truncation_reason}]"
+    return line
 
 
 def _print_report(reports: list[EpisodeTrimReport], fps: float) -> None:

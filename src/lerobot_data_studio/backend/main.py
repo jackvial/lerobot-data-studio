@@ -2,12 +2,13 @@ import logging
 import re
 import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import requests
 import uvicorn
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, status as http_status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from huggingface_hub import HfApi
 from lerobot import available_datasets
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -38,12 +39,27 @@ from .models import (
     DatasetValidationResponse,
     EpisodeData,
     IdleAnalysisResponse,
+    RltBufferFile,
+    RltBufferFilesResponse,
+    RltEpisodesResponse,
+    RltEpisodeSummary,
+    RltTransitionInfo,
+    RltTransitionsResponse,
     SaveCriticalSectionsRequest,
     SaveSubtaskAnnotationsRequest,
     SubtaskAnnotationsResponse,
     SubtaskAnnotationsSummaryResponse,
     SubtaskTaskListResponse,
     VideoInfo,
+)
+from .rlt_buffer import (
+    RltBufferStore,
+    build_transition_info,
+    episode_duration_seconds,
+    episode_label,
+    get_buffer_root,
+    get_rlt_buffer_store,
+    list_buffer_files,
 )
 from .state_store import StateStore, get_state_store
 from .subtask_annotations import (
@@ -666,6 +682,132 @@ async def get_current_user():
     except Exception as e:
         logger.warning(f"Could not get user info: {e}")
         return {"username": None, "error": "Not logged in to HuggingFace Hub"}
+
+
+def _rlt_store_dep() -> RltBufferStore:
+    return get_rlt_buffer_store()
+
+
+def _resolve_rlt_path(token: str, store: RltBufferStore) -> tuple[Path, Path]:
+    root = get_buffer_root()
+    try:
+        path = store.resolve_token(token, root)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return path, root
+
+
+@app.get("/api/rlt_buffer/files", response_model=RltBufferFilesResponse)
+async def list_rlt_buffer_files(store: RltBufferStore = Depends(_rlt_store_dep)):
+    """List `.pt` review-buffer files under the configured root."""
+    root = get_buffer_root()
+    files: list[RltBufferFile] = []
+    for path in list_buffer_files(root):
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        try:
+            buffer = store.get(path)
+        except (RuntimeError, ValueError) as exc:
+            logger.warning("Skipping unreadable RLT buffer %s: %s", path, exc)
+            continue
+        files.append(
+            RltBufferFile(
+                file_token=RltBufferStore.encode_token(path.resolve()),
+                path=str(path),
+                size_bytes=stat.st_size,
+                mtime=stat.st_mtime,
+                num_samples=buffer.num_samples,
+                num_episodes=buffer.num_episodes,
+            )
+        )
+    return RltBufferFilesResponse(files=files, root=str(root))
+
+
+@app.get("/api/rlt_buffer/{file_token}/episodes", response_model=RltEpisodesResponse)
+async def list_rlt_buffer_episodes(
+    file_token: str,
+    store: RltBufferStore = Depends(_rlt_store_dep),
+):
+    """Return per-episode summaries used by the viewer sidebar."""
+    path, _ = _resolve_rlt_path(file_token, store)
+    buffer = store.get(path)
+
+    episodes: list[RltEpisodeSummary] = []
+    for episode_id, indices in sorted(buffer.episode_indices.items()):
+        first_ts: float | None = None
+        for idx in indices:
+            ts = buffer.samples[idx].inference_ts
+            if ts is not None:
+                first_ts = ts
+                break
+        has_intervention = any(buffer.samples[i].is_intervention for i in indices)
+        episodes.append(
+            RltEpisodeSummary(
+                episode_id=episode_id,
+                num_transitions=len(indices),
+                duration_s=episode_duration_seconds(buffer.samples, indices),
+                label=episode_label(buffer.samples, indices),
+                has_intervention=has_intervention,
+                first_inference_ts=first_ts,
+            )
+        )
+    return RltEpisodesResponse(file_token=file_token, episodes=episodes)
+
+
+@app.get(
+    "/api/rlt_buffer/{file_token}/episodes/{episode_id}/transitions",
+    response_model=RltTransitionsResponse,
+)
+async def list_rlt_buffer_transitions(
+    file_token: str,
+    episode_id: int,
+    store: RltBufferStore = Depends(_rlt_store_dep),
+):
+    """Return ordered transition metadata for one episode."""
+    path, _ = _resolve_rlt_path(file_token, store)
+    buffer = store.get(path)
+
+    indices = buffer.episode_indices.get(episode_id)
+    if indices is None:
+        raise HTTPException(status_code=404, detail=f"Episode {episode_id} not found")
+
+    payload, has_inference_ts = build_transition_info(buffer.samples, indices)
+    transitions = [RltTransitionInfo(**item) for item in payload]
+    return RltTransitionsResponse(
+        file_token=file_token,
+        episode_id=episode_id,
+        transitions=transitions,
+        has_inference_ts=has_inference_ts,
+    )
+
+
+@app.get("/api/rlt_buffer/{file_token}/transitions/{idx}/image/{camera_key:path}")
+async def get_rlt_buffer_transition_image(
+    file_token: str,
+    idx: int,
+    camera_key: str,
+    store: RltBufferStore = Depends(_rlt_store_dep),
+):
+    """Serve the JPEG bytes for one camera at one transition."""
+    path, _ = _resolve_rlt_path(file_token, store)
+    buffer = store.get(path)
+
+    if idx < 0 or idx >= len(buffer.samples):
+        raise HTTPException(status_code=404, detail=f"Transition {idx} not found")
+
+    sample = buffer.samples[idx]
+    if not sample.images_jpeg or camera_key not in sample.images_jpeg:
+        raise HTTPException(
+            status_code=404, detail=f"Camera '{camera_key}' not stored for transition {idx}"
+        )
+
+    return Response(content=sample.images_jpeg[camera_key], media_type="image/jpeg")
 
 
 if __name__ == "__main__":
