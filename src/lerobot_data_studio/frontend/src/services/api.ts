@@ -134,10 +134,18 @@ export const datasetApi = {
   validateDataset: async (
     namespace: string,
     name: string
-  ): Promise<{ exists: boolean; message?: string }> => {
-    const response = await api.get<{ exists: boolean; message?: string }>(
-      `/datasets/validate/${namespace}/${name}`
-    );
+  ): Promise<{
+    exists: boolean;
+    message?: string;
+    source?: 'hub' | 'local';
+    warning?: string;
+  }> => {
+    const response = await api.get<{
+      exists: boolean;
+      message?: string;
+      source?: 'hub' | 'local';
+      warning?: string;
+    }>(`/datasets/validate/${namespace}/${name}`);
     return response.data;
   },
 

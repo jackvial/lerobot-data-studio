@@ -66,7 +66,13 @@ from .rlt_buffer import (
     resolve_buffer_selection,
     save_episode_review,
 )
-from .state_store import StateStore, get_state_store
+from .state_store import (
+    StateStore,
+    get_state_store,
+    is_local_lerobot_dataset,
+    list_local_lerobot_datasets,
+    local_lerobot_dataset_path,
+)
 from .subtask_annotations import (
     build_summary,
     load_skills_json,
@@ -169,7 +175,9 @@ async def list_datasets():
         "lerobot/svla_so100_stacking",
         "jackvial/screwdriver-391",
     ]
-    return DatasetListResponse(featured_datasets=featured_datasets, lerobot_datasets=available_datasets)
+    local_datasets = list_local_lerobot_datasets()
+    lerobot_datasets = sorted({*available_datasets, *local_datasets})
+    return DatasetListResponse(featured_datasets=featured_datasets, lerobot_datasets=lerobot_datasets)
 
 
 @app.get("/api/datasets/{dataset_namespace}/{dataset_name}/status")
@@ -625,18 +633,42 @@ async def load_dataset(
 @app.get("/api/datasets/search", response_model=DatasetSearchResponse)
 async def search_datasets(prefix: str):
     """Search datasets on HuggingFace Hub by prefix match."""
-    api = HfApi()
-    results = api.list_datasets(search=prefix)
-    repo_ids = [d.id for d in results]
+    local_repo_ids = [
+        repo_id
+        for repo_id in list_local_lerobot_datasets()
+        if repo_id.casefold().startswith(prefix.casefold())
+    ]
+
+    try:
+        api = HfApi()
+        results = api.list_datasets(search=prefix)
+        hub_repo_ids = [d.id for d in results]
+    except Exception as e:
+        logger.warning("Hub dataset search failed for prefix %s: %s", prefix, e)
+        hub_repo_ids = []
+
+    repo_ids = list(dict.fromkeys([*local_repo_ids, *hub_repo_ids]))
     return DatasetSearchResponse(repo_ids=repo_ids)
 
 
 @app.get("/api/datasets/user/{username}", response_model=DatasetSearchResponse)
 async def list_user_datasets(username: str):
     """List datasets on HuggingFace Hub for a given user."""
-    api = HfApi()
-    results = api.list_datasets(author=username)
-    repo_ids = [d.id for d in results]
+    local_repo_ids = [
+        repo_id
+        for repo_id in list_local_lerobot_datasets()
+        if repo_id.split("/", 1)[0].casefold() == username.casefold()
+    ]
+
+    try:
+        api = HfApi()
+        results = api.list_datasets(author=username)
+        hub_repo_ids = [d.id for d in results]
+    except Exception as e:
+        logger.warning("Hub dataset listing failed for user %s: %s", username, e)
+        hub_repo_ids = []
+
+    repo_ids = list(dict.fromkeys([*local_repo_ids, *hub_repo_ids]))
     return DatasetSearchResponse(repo_ids=repo_ids)
 
 
@@ -644,22 +676,47 @@ async def list_user_datasets(username: str):
     "/api/datasets/validate/{dataset_namespace}/{dataset_name}", response_model=DatasetValidationResponse
 )
 async def validate_dataset(dataset_namespace: str, dataset_name: str):
-    """Check if a dataset exists on HuggingFace Hub."""
+    """Check if a dataset can be loaded, preferring the local LeRobot cache."""
     repo_id = f"{dataset_namespace}/{dataset_name}"
+    try:
+        check_repo_id(repo_id)
+    except ValueError as e:
+        return DatasetValidationResponse(exists=False, message=str(e))
+
+    local_path = local_lerobot_dataset_path(repo_id)
+    local_exists = is_local_lerobot_dataset(repo_id)
     api = HfApi()
 
     try:
         api.dataset_info(repo_id)
-        return DatasetValidationResponse(exists=True)
+        if local_exists:
+            return DatasetValidationResponse(
+                exists=True,
+                source="local",
+                message=f"Using local dataset at {local_path}",
+            )
+        return DatasetValidationResponse(exists=True, source="hub")
     except (ValueError, KeyError, requests.HTTPError) as e:
+        if local_exists:
+            logger.warning("Hub validation failed for local dataset %s: %s", repo_id, e)
+            warning = f"Using local dataset at {local_path}. It was not found on HuggingFace Hub."
+            return DatasetValidationResponse(exists=True, source="local", message=warning, warning=warning)
         return DatasetValidationResponse(
             exists=False, message=f"Dataset '{repo_id}' not found on HuggingFace Hub: {str(e)}"
         )
     except requests.RequestException as e:
+        if local_exists:
+            logger.warning("Hub validation network error for local dataset %s: %s", repo_id, e)
+            warning = f"Using local dataset at {local_path}. Hub validation failed due to a network error."
+            return DatasetValidationResponse(exists=True, source="local", message=warning, warning=warning)
         return DatasetValidationResponse(
             exists=False, message=f"Network error checking dataset '{repo_id}': {str(e)}"
         )
     except Exception as e:
+        if local_exists:
+            logger.warning("Unexpected Hub validation error for local dataset %s: %s", repo_id, e)
+            warning = f"Using local dataset at {local_path}. Hub validation could not be completed."
+            return DatasetValidationResponse(exists=True, source="local", message=warning, warning=warning)
         logger.error(f"Unexpected error validating dataset {repo_id}: {str(e)}", exc_info=True)
         return DatasetValidationResponse(exists=False, message=f"Error validating dataset '{repo_id}'")
 

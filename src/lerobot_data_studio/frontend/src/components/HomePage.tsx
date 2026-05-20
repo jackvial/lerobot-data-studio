@@ -7,6 +7,7 @@ import {
   CheckCircleOutlined,
   CloseCircleOutlined,
   ExperimentOutlined,
+  ExclamationCircleOutlined,
 } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
 import { datasetApi } from '@/services/api';
@@ -17,11 +18,11 @@ const HomePage: React.FC = () => {
   const navigate = useNavigate();
   const [inputValue, setInputValue] = useState('');
   const [validationStatus, setValidationStatus] = useState<
-    'idle' | 'validating' | 'success' | 'error'
+    'idle' | 'validating' | 'success' | 'warning' | 'error'
   >('idle');
   const [validationMessage, setValidationMessage] = useState('');
 
-  const { data: datasets, isLoading } = useQuery({
+  const { isLoading } = useQuery({
     queryKey: ['datasets'],
     queryFn: datasetApi.listDatasets,
   });
@@ -33,7 +34,7 @@ const HomePage: React.FC = () => {
 
   const validateDatasetFormat = (value: string): boolean => {
     // Check if it matches username/dataset-name format
-    const pattern = /^[a-zA-Z0-9_-]+\/[a-zA-Z0-9_-]+$/;
+    const pattern = /^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+$/;
     return pattern.test(value);
   };
 
@@ -54,32 +55,23 @@ const HomePage: React.FC = () => {
     setValidationMessage('Checking dataset...');
 
     try {
-      // Check if dataset exists in the available datasets
-      const allDatasets = [
-        ...(datasets?.lerobot_datasets || []),
-        ...(datasets?.featured_datasets || []),
-      ];
-      const exists = allDatasets.some((dataset) => dataset === value);
-
-      if (exists) {
-        setValidationStatus('success');
-        setValidationMessage('Dataset exists ✔');
-      } else {
-        // Try to validate if the dataset exists on the hub
-        try {
-          const [namespace, name] = value.split('/');
-          const result = await datasetApi.validateDataset(namespace, name);
-          if (result.exists) {
-            setValidationStatus('success');
-            setValidationMessage('Dataset exists ✔');
-          } else {
-            setValidationStatus('error');
-            setValidationMessage(result.message || 'Dataset not found on hub');
-          }
-        } catch {
-          setValidationStatus('error');
-          setValidationMessage('Dataset not found on hub');
+      const [namespace, name] = value.split('/');
+      const result = await datasetApi.validateDataset(namespace, name);
+      if (result.exists) {
+        if (result.warning) {
+          setValidationStatus('warning');
+          setValidationMessage(result.warning);
+        } else {
+          setValidationStatus('success');
+          setValidationMessage(
+            result.source === 'local'
+              ? result.message || 'Using local dataset'
+              : 'Dataset exists ✔'
+          );
         }
+      } else {
+        setValidationStatus('error');
+        setValidationMessage(result.message || 'Dataset not found on hub');
       }
     } catch {
       setValidationStatus('error');
@@ -94,13 +86,13 @@ const HomePage: React.FC = () => {
   };
 
   const handleSearch = () => {
-    if (validationStatus === 'success' && inputValue) {
+    if ((validationStatus === 'success' || validationStatus === 'warning') && inputValue) {
       handleDatasetSelect(inputValue);
     }
   };
 
   const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter' && validationStatus === 'success') {
+    if (e.key === 'Enter' && (validationStatus === 'success' || validationStatus === 'warning')) {
       handleSearch();
     }
   };
@@ -111,6 +103,8 @@ const HomePage: React.FC = () => {
         return <Spin size='small' />;
       case 'success':
         return <CheckCircleOutlined style={{ color: '#52c41a' }} />;
+      case 'warning':
+        return <ExclamationCircleOutlined style={{ color: '#faad14' }} />;
       case 'error':
         return <CloseCircleOutlined style={{ color: '#ff4d4f' }} />;
       default:
@@ -165,14 +159,20 @@ const HomePage: React.FC = () => {
                   onChange={handleInputChange}
                   onKeyPress={handleKeyPress}
                   suffix={getValidationIcon()}
-                  status={validationStatus === 'error' ? 'error' : undefined}
+                  status={
+                    validationStatus === 'error'
+                      ? 'error'
+                      : validationStatus === 'warning'
+                      ? 'warning'
+                      : undefined
+                  }
                   style={{ width: '100%' }}
                 />
                 <Button
                   type='primary'
                   icon={<ArrowRightOutlined />}
                   onClick={handleSearch}
-                  disabled={validationStatus !== 'success'}
+                  disabled={validationStatus !== 'success' && validationStatus !== 'warning'}
                 />
               </Space.Compact>
               {validationMessage && (
@@ -180,6 +180,8 @@ const HomePage: React.FC = () => {
                   type={
                     validationStatus === 'error'
                       ? 'danger'
+                      : validationStatus === 'warning'
+                      ? 'warning'
                       : validationStatus === 'success'
                       ? 'success'
                       : 'secondary'

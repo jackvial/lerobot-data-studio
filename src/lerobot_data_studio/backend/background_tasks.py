@@ -13,7 +13,11 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
 from .idle_trim import exclusive_keep_time_range, trim_episodes_with_explicit_bounds
 from .models import CreateTaskStatus, DatasetLoadingStatus, EpisodeTrimBounds
-from .state_store import StateStore
+from .state_store import (
+    StateStore,
+    is_local_lerobot_dataset,
+    local_lerobot_dataset_path,
+)
 from .subtask_annotations import (
     export_subtask_annotations,
     materialize_subtask_index_feature,
@@ -44,9 +48,14 @@ def load_dataset_task(repo_id: str, state_store: StateStore = None):
         memory_before = get_process_memory_mb()
         logger.info(f"Memory before loading {repo_id}: {memory_before} MB")
 
+        if is_local_lerobot_dataset(repo_id):
+            load_message = f"Loading local dataset {repo_id} from {local_lerobot_dataset_path(repo_id)}..."
+        else:
+            load_message = f"Downloading dataset {repo_id}..."
+
         state_store.set_loading_status(
             repo_id,
-            DatasetLoadingStatus(progress=0.3, message=f"Downloading dataset {repo_id}..."),
+            DatasetLoadingStatus(progress=0.3, message=load_message),
         )
 
         dataset = LeRobotDataset(repo_id)

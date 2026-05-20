@@ -81,6 +81,8 @@ class DatasetSearchResponse(BaseModel):
 class DatasetValidationResponse(BaseModel):
     exists: bool
     message: Optional[str] = None
+    source: Optional[Literal["hub", "local"]] = None
+    warning: Optional[str] = None
 
 
 class CreateTaskStatus(BaseModel):

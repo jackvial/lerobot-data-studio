@@ -14,6 +14,36 @@ default_cache_path = Path(HF_HOME) / "lerobot"
 HF_LEROBOT_HOME = Path(os.getenv("HF_LEROBOT_HOME", default_cache_path)).expanduser()
 
 
+def local_lerobot_dataset_path(repo_id: str, root: Path | None = None) -> Path:
+    """Return the expected local LeRobot cache path for a repo id."""
+    return (root or HF_LEROBOT_HOME) / repo_id
+
+
+def is_local_lerobot_dataset(repo_id: str, root: Path | None = None) -> bool:
+    """Check for the minimum on-disk layout needed to load a LeRobot dataset."""
+    dataset_root = local_lerobot_dataset_path(repo_id, root)
+    return (dataset_root / "meta" / "info.json").is_file() and (dataset_root / "data").is_dir()
+
+
+def list_local_lerobot_datasets(root: Path | None = None) -> list[str]:
+    """List local datasets under the LeRobot cache using namespace/name ids."""
+    cache_root = root or HF_LEROBOT_HOME
+    if not cache_root.exists():
+        return []
+
+    repo_ids: list[str] = []
+    for namespace_dir in sorted(cache_root.iterdir()):
+        if not namespace_dir.is_dir() or namespace_dir.name.startswith("."):
+            continue
+        for dataset_dir in sorted(namespace_dir.iterdir()):
+            if not dataset_dir.is_dir() or dataset_dir.name.startswith("."):
+                continue
+            repo_id = f"{namespace_dir.name}/{dataset_dir.name}"
+            if is_local_lerobot_dataset(repo_id, cache_root):
+                repo_ids.append(repo_id)
+    return repo_ids
+
+
 @dataclass
 class StateStore:
     """Simple global state management"""
