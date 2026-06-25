@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Layout,
@@ -18,9 +18,9 @@ import {
   HomeOutlined,
 } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { datasetApi } from '@/services/api';
 import { useSelectedEpisodes } from '@/hooks/useSelectedEpisodes';
 import { useVideoPreloader } from '@/hooks/useVideoPreloader';
+import { CreateDatasetRequest } from '@/types';
 import VideoPlayer, { VideoTimeUpdateOptions } from './VideoPlayer';
 import DataChart, { DataChartHandle } from './DataChart';
 import LoadingIndicator from './LoadingIndicator';
@@ -28,12 +28,20 @@ import EpisodeSidebar from './EpisodeSidebar';
 import EpisodeIndexDisplay from './EpisodeIndexDisplay';
 import EpisodeNavigation from './EpisodeNavigation';
 import DatasetCompletionModal from './DatasetCompletionModal';
-import { createDatasetRequest } from '@/utils/createDataset';
+import {
+  DatasetViewerController,
+  createInitialDatasetViewerViewState,
+  type DatasetViewerViewState,
+} from './controllers/DatasetViewerController';
 
 const { Header, Content, Sider } = Layout;
 const { Title, Text } = Typography;
 
-const DatasetViewer: React.FC = () => {
+interface CreateDatasetFormValues {
+  new_repo_id: string;
+}
+
+const DatasetViewer = () => {
   const { namespace, name, episodeId } = useParams<{
     namespace: string;
     name: string;
@@ -41,20 +49,22 @@ const DatasetViewer: React.FC = () => {
   }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [currentEpisodeId, setCurrentEpisodeId] = useState(
-    episodeId ? parseInt(episodeId) : 0
+  const [form] = Form.useForm<CreateDatasetFormValues>();
+  const [viewState, setViewState] = useState<DatasetViewerViewState>(() =>
+    createInitialDatasetViewerViewState(episodeId)
   );
-  const [isCreateModalVisible, setIsCreateModalVisible] = useState(false);
-  const [isShortcutsModalVisible, setIsShortcutsModalVisible] = useState(false);
-  const [currentVideoTime, setCurrentVideoTime] = useState(0);
-  const currentVideoTimeRef = useRef(0);
-  const dataChartRef = useRef<DataChartHandle | null>(null);
-  const [creationTaskId, setCreationTaskId] = useState<string | null>(null);
-  const [creationStatus, setCreationStatus] = useState<any>(null);
-  const [showStatusModal, setShowStatusModal] = useState(false);
-  const [form] = Form.useForm();
+  const controllerRef = useRef<DatasetViewerController | null>(null);
 
-  const datasetId = `${namespace}/${name}`;
+  if (controllerRef.current === null) {
+    controllerRef.current = new DatasetViewerController({
+      initialEpisodeId: episodeId,
+      onViewStateChange: setViewState,
+    });
+  }
+
+  const controller = controllerRef.current;
+  const datasetId = controller.getDatasetId(namespace, name);
+  const currentEpisodeId = viewState.currentEpisodeId;
 
   const {
     selectedEpisodes,
@@ -64,275 +74,161 @@ const DatasetViewer: React.FC = () => {
     selectedCount,
   } = useSelectedEpisodes(datasetId);
 
-  // Updated version to trigger auto-load
+  useEffect(() => {
+    controller.syncRouteEpisodeId(episodeId);
+  }, [controller, episodeId]);
+
   const { data: status, isLoading: isStatusLoading } = useQuery({
     queryKey: ['datasetStatus', namespace, name],
-    queryFn: async () => {
-      // First check status without auto-load
-      const initialStatus = await datasetApi.getDatasetStatus(
-        namespace!,
-        name!,
-        false
-      );
-
-      // If not loaded, trigger auto-load
-      if (initialStatus.status === 'not_loaded') {
-        return datasetApi.getDatasetStatus(namespace!, name!, true);
-      }
-
-      return initialStatus;
-    },
-    enabled: !!namespace && !!name,
-    refetchInterval: (query) => {
-      const currentStatus = query.state.data;
-      if (
-        currentStatus?.status === 'loading' ||
-        currentStatus?.status === 'not_loaded'
-      ) {
-        return 1000; // Poll every second while loading
-      }
-      // Keep a lightweight heartbeat so backend reloads can recover without
-      // requiring a manual browser refresh.
-      if (currentStatus?.status === 'ready') {
-        return 5000;
-      }
-      return false; // Stop polling when ready or error
-    },
+    queryFn: () => controller.loadDatasetStatus(namespace!, name!),
+    enabled: controller.canLoadDataset(namespace, name),
+    refetchInterval: (query) =>
+      controller.getDatasetStatusRefetchInterval(query.state.data),
     refetchIntervalInBackground: true,
     refetchOnReconnect: true,
     refetchOnWindowFocus: true,
   });
 
-  // Load episode data only when dataset is ready
   const {
     data: episodeData,
     isLoading: isEpisodeLoading,
     error,
   } = useQuery({
     queryKey: ['episode', namespace, name, currentEpisodeId],
-    queryFn: () => datasetApi.getEpisode(namespace!, name!, currentEpisodeId),
-    enabled: !!namespace && !!name && status?.status === 'ready',
-    retry: (failureCount, error: any) => {
-      if (error?.response?.status === 202) {
-        // Dataset is being loaded, wait for status to update
-        return false; // Don't retry, wait for enabled condition
-      }
-      return failureCount < 2;
-    },
-    staleTime: 5 * 60 * 1000, // Consider data fresh for 5 minutes
-    gcTime: 10 * 60 * 1000, // Keep in cache for 10 minutes
+    queryFn: () => controller.loadEpisode(namespace!, name!, currentEpisodeId),
+    enabled: controller.canLoadEpisode(namespace, name, status),
+    retry: (failureCount, queryError) =>
+      controller.shouldRetryEpisodeQuery(failureCount, queryError),
+    staleTime: 5 * 60 * 1000,
+    gcTime: 10 * 60 * 1000,
   });
 
   useEffect(() => {
-    if (!namespace || !name || (error as any)?.response?.status !== 202) {
+    if (
+      !namespace ||
+      !name ||
+      !controller.shouldInvalidateDatasetStatusForEpisodeError(error)
+    ) {
       return;
     }
 
     void queryClient.invalidateQueries({
       queryKey: ['datasetStatus', namespace, name],
     });
-  }, [error, name, namespace, queryClient]);
+  }, [controller, error, name, namespace, queryClient]);
 
-  // Get list of all episodes
   const { data: episodesList } = useQuery({
     queryKey: ['episodes', namespace, name],
-    queryFn: () => datasetApi.listEpisodes(namespace!, name!),
-    enabled: !!namespace && !!name && episodeData != null,
+    queryFn: () => controller.listEpisodes(namespace!, name!),
+    enabled: Boolean(namespace && name && episodeData),
   });
 
-  // Poll for creation status
-  useEffect(() => {
-    if (!creationTaskId) return;
-
-    const pollStatus = async () => {
-      try {
-        const status = await datasetApi.getCreateStatus(creationTaskId);
-        setCreationStatus(status);
-
-        if (status.status === 'completed') {
-          setCreationTaskId(null);
-          setIsCreateModalVisible(false);
-          form.resetFields();
-          clearSelection();
-          // Keep the modal open but with completed status
-        } else if (status.status === 'failed') {
-          setCreationTaskId(null);
-          // Keep status to show the error in modal
-        }
-      } catch (error: any) {
-        if (error?.response?.status === 404) {
-          setCreationTaskId(null);
-          setCreationStatus({
-            status: 'failed',
-            progress: 0,
-            message:
-              'The backend restarted while tracking this dataset creation. Start the creation again to continue.',
-          });
-          message.warning(
-            'Backend reloaded while creating the dataset, so progress tracking was reset.'
-          );
-          return;
-        }
-        console.error('Error polling creation status:', error);
-      }
-    };
-
-    const interval = setInterval(pollStatus, 2000); // Poll every 2 seconds
-    pollStatus(); // Initial poll
-
-    return () => clearInterval(interval);
-  }, [creationTaskId, form, clearSelection]);
-
-  // Create dataset mutation
   const createDatasetMutation = useMutation({
-    mutationFn: datasetApi.createDataset,
+    mutationFn: (payload: CreateDatasetRequest) =>
+      controller.createDataset(payload),
     onSuccess: (data) => {
-      if (data.task_id) {
-        setCreationTaskId(data.task_id);
-        setShowStatusModal(true);
-        message.info('Dataset creation started. Please wait...');
-      } else {
-        message.success(data.message);
-        setIsCreateModalVisible(false);
-        form.resetFields();
-        clearSelection();
-      }
+      controller.handleCreateDatasetSuccess(data, {
+        resetForm: () => form.resetFields(),
+        clearSelection,
+        notifyInfo: message.info,
+        notifySuccess: message.success,
+      });
     },
-    onError: (error: any) => {
-      console.error('Create dataset error:', error);
-      const errorMessage =
-        error.response?.data?.detail || 'Failed to create dataset';
-
-      // If detail is an array of validation errors, format them nicely
-      if (Array.isArray(error.response?.data?.detail)) {
-        const validationErrors = error.response.data.detail
-          .map((err: any) => `${err.loc.join('.')}: ${err.msg}`)
-          .join('\n');
-        message.error(`Validation errors:\n${validationErrors}`);
-      } else {
-        message.error(errorMessage);
-      }
+    onError: (mutationError) => {
+      controller.handleCreateDatasetError(mutationError, {
+        notifyError: message.error,
+      });
     },
   });
 
-  // Video preloading
-  const getVideoUrl = useCallback(
-    (episodeId: number) => {
-      if (!episodeData?.videos_info?.[0]) return undefined;
-      // Construct the video URL for the episode
-      const videoInfo = episodeData.videos_info[0];
-      const baseUrl = videoInfo.url.substring(
-        0,
-        videoInfo.url.lastIndexOf('/')
-      );
-      return `${baseUrl}/episode_${episodeId}`;
-    },
-    [episodeData]
+  useEffect(
+    () =>
+      controller.startCreationStatusPolling({
+        resetForm: () => form.resetFields(),
+        clearSelection,
+        notifyWarning: message.warning,
+      }),
+    [clearSelection, controller, form, viewState.creationTaskId]
   );
 
-  const {} = useVideoPreloader(
+  const getVideoUrl = useCallback(
+    (nextEpisodeId: number) =>
+      controller.getVideoUrl(episodeData, nextEpisodeId),
+    [controller, episodeData]
+  );
+
+  useVideoPreloader(
     currentEpisodeId,
     episodeData?.dataset_info.num_episodes || 0,
     getVideoUrl
   );
 
-  const paintPlaybackTime = useCallback((time: number) => {
-    dataChartRef.current?.setPlayhead(time);
-  }, []);
+  const handleEpisodeChange = useCallback(
+    (newEpisodeId: number) => {
+      controller.setCurrentEpisodeId(newEpisodeId);
+    },
+    [controller]
+  );
+
+  const handleDataChartRef = useCallback(
+    (handle: DataChartHandle | null) => {
+      controller.setDataChart(handle);
+    },
+    [controller]
+  );
 
   const handleVideoTimeUpdate = useCallback(
     (time: number, options?: VideoTimeUpdateOptions) => {
-      currentVideoTimeRef.current = time;
-      paintPlaybackTime(time);
-      if (options?.force) {
-        setCurrentVideoTime(time);
-      }
+      controller.handleVideoTimeUpdate(time, options);
     },
-    [paintPlaybackTime]
+    [controller]
   );
 
-  const handleEpisodeChange = (newEpisodeId: number) => {
-    setCurrentEpisodeId(newEpisodeId);
-  };
+  useEffect(() => {
+    controller.resetPlaybackTime();
+  }, [controller, currentEpisodeId]);
 
   useEffect(() => {
-    currentVideoTimeRef.current = 0;
-    paintPlaybackTime(0);
-    setCurrentVideoTime(0);
-  }, [currentEpisodeId, paintPlaybackTime]);
+    const nextRoute = controller.getEpisodeRoute({
+      namespace,
+      name,
+      routeEpisodeId: episodeId,
+    });
 
-  // Update URL when episode changes
-  useEffect(() => {
-    if (namespace && name && currentEpisodeId !== parseInt(episodeId || '0')) {
-      navigate(`/${namespace}/${name}/episode/${currentEpisodeId}`, {
-        replace: true,
-      });
+    if (nextRoute) {
+      navigate(nextRoute, { replace: true });
     }
-  }, [currentEpisodeId, namespace, name, episodeId, navigate]);
+  }, [controller, currentEpisodeId, episodeId, name, namespace, navigate]);
 
-  // Add keyboard shortcuts for navigation and selection
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Check if the target is an input element to avoid conflicts
-      const target = e.target as HTMLElement;
-      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
-        return;
-      }
-
-      // Left arrow - previous episode
-      if (e.key === 'ArrowLeft') {
-        e.preventDefault();
-        if (currentEpisodeId > 0) {
-          handleEpisodeChange(currentEpisodeId - 1);
-        }
-      }
-      // Right arrow - next episode
-      else if (e.key === 'ArrowRight') {
-        e.preventDefault();
-        if (
-          episodeData &&
-          currentEpisodeId < episodeData.dataset_info.num_episodes - 1
-        ) {
-          handleEpisodeChange(currentEpisodeId + 1);
-        }
-      }
-      // Cmd+K (Mac) or Ctrl+K (Windows/Linux) - toggle checkbox
-      else if (e.key === 'k' && (e.metaKey || e.ctrlKey)) {
-        e.preventDefault();
-        toggleEpisode(currentEpisodeId);
-      }
-      // Cmd+P (Mac) or Ctrl+P (Windows/Linux) - show shortcuts
-      else if (e.key === 'p' && (e.metaKey || e.ctrlKey)) {
-        e.preventDefault();
-        setIsShortcutsModalVisible(true);
-      }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      controller.handleKeyboardEvent(event, {
+        episodeData,
+        toggleEpisode,
+      });
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [currentEpisodeId, episodeData, handleEpisodeChange, toggleEpisode]);
+  }, [controller, episodeData, toggleEpisode]);
 
-  const handleCreateDataset = async (values: any) => {
-    if (!episodeData) {
-      message.error('Episode data not loaded');
+  const handleCreateDataset = async (values: CreateDatasetFormValues) => {
+    const { error: validationError, payload } =
+      controller.prepareCreateDataset({
+        values,
+        datasetId,
+        episodeData,
+        selectedEpisodes,
+      });
+
+    if (validationError || !payload) {
+      message.error(validationError || 'Failed to create dataset');
       return;
     }
-
-    if (!selectedEpisodes || selectedEpisodes.length === 0) {
-      message.error('No episodes selected');
-      return;
-    }
-
-    const payload = createDatasetRequest({
-      datasetId,
-      newRepoId: values.new_repo_id,
-      selectedEpisodes,
-    });
 
     await createDatasetMutation.mutateAsync(payload);
   };
 
-  // Show loading if we're checking status or status is loading
   if (isStatusLoading || status?.status === 'loading') {
     const loadingMessage =
       status?.status === 'loading'
@@ -343,7 +239,6 @@ const DatasetViewer: React.FC = () => {
     return <LoadingIndicator message={loadingMessage} progress={progress} />;
   }
 
-  // Show error if status is error
   if (status?.status === 'error') {
     return (
       <div style={{ padding: '40px', textAlign: 'center' }}>
@@ -364,18 +259,17 @@ const DatasetViewer: React.FC = () => {
     );
   }
 
-  // Show error if episode loading failed (not 202)
   if (
     error &&
-    (error as any).response?.status !== 202 &&
-    (error as any).message !== 'Dataset not ready'
+    !controller.shouldInvalidateDatasetStatusForEpisodeError(error) &&
+    (!(error instanceof Error) || error.message !== 'Dataset not ready')
   ) {
     return (
       <div style={{ padding: '40px', textAlign: 'center' }}>
         <Alert
           type='error'
           message='Error loading episode'
-          description={(error as any).message}
+          description={error instanceof Error ? error.message : 'Unknown error'}
           showIcon
         />
       </div>
@@ -444,14 +338,14 @@ const DatasetViewer: React.FC = () => {
               <Button
                 type='primary'
                 icon={<PlusOutlined />}
-                onClick={() => setIsCreateModalVisible(true)}
+                onClick={() => controller.openCreateModal()}
               >
                 Create Dataset ({selectedCount} episodes)
               </Button>
             )}
             <Button
               icon={<QuestionCircleOutlined />}
-              onClick={() => setIsShortcutsModalVisible(true)}
+              onClick={() => controller.openShortcutsModal()}
               title='Keyboard Shortcuts (Cmd+P)'
             >
               Shortcuts
@@ -496,7 +390,7 @@ const DatasetViewer: React.FC = () => {
                 currentEpisodeId={currentEpisodeId}
                 totalEpisodes={episodeData.dataset_info.num_episodes}
                 onEpisodeChange={handleEpisodeChange}
-                isPreloaded={() => false} // Can be improved with preloader state
+                isPreloaded={() => false}
               />
 
               <VideoPlayer
@@ -506,10 +400,10 @@ const DatasetViewer: React.FC = () => {
               />
 
               <DataChart
-                ref={dataChartRef}
+                ref={handleDataChartRef}
                 episodeData={episodeData.episode_data}
                 featureNames={episodeData.feature_names}
-                currentTime={currentVideoTime}
+                currentTime={viewState.currentVideoTime}
               />
             </Space>
           ) : null}
@@ -518,8 +412,8 @@ const DatasetViewer: React.FC = () => {
 
       <Modal
         title='Create New Dataset'
-        open={isCreateModalVisible}
-        onCancel={() => setIsCreateModalVisible(false)}
+        open={viewState.isCreateModalVisible}
+        onCancel={() => controller.closeCreateModal()}
         footer={null}
       >
         <Form form={form} layout='vertical' onFinish={handleCreateDataset}>
@@ -544,7 +438,7 @@ const DatasetViewer: React.FC = () => {
           </Form.Item>
           <Form.Item>
             <Space>
-              <Button onClick={() => setIsCreateModalVisible(false)}>
+              <Button onClick={() => controller.closeCreateModal()}>
                 Cancel
               </Button>
               <Button
@@ -559,13 +453,12 @@ const DatasetViewer: React.FC = () => {
         </Form>
       </Modal>
 
-      {/* Keyboard Shortcuts Modal */}
       <Modal
         title='Keyboard Shortcuts'
-        open={isShortcutsModalVisible}
-        onCancel={() => setIsShortcutsModalVisible(false)}
+        open={viewState.isShortcutsModalVisible}
+        onCancel={() => controller.closeShortcutsModal()}
         footer={[
-          <Button key='close' onClick={() => setIsShortcutsModalVisible(false)}>
+          <Button key='close' onClick={() => controller.closeShortcutsModal()}>
             Close
           </Button>,
         ]}
@@ -634,20 +527,16 @@ const DatasetViewer: React.FC = () => {
         </Space>
       </Modal>
 
-      {/* Dataset Creation Status Modal */}
       <DatasetCompletionModal
-        visible={showStatusModal}
-        onClose={() => {
-          setShowStatusModal(false);
-          setCreationStatus(null);
-        }}
+        visible={viewState.showStatusModal}
+        onClose={() => controller.closeStatusModal()}
         status={
-          creationStatus
+          viewState.creationStatus
             ? {
-                status: creationStatus.status,
-                progress: creationStatus.progress,
-                message: creationStatus.message,
-                repo_id: creationStatus.new_repo_id,
+                status: viewState.creationStatus.status,
+                progress: viewState.creationStatus.progress,
+                message: viewState.creationStatus.message,
+                repo_id: viewState.creationStatus.new_repo_id,
               }
             : undefined
         }
