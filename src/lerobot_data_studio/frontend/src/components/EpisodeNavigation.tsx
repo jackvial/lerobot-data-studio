@@ -1,5 +1,5 @@
 import React from 'react';
-import { Button, Space, InputNumber, Tag, Tooltip } from 'antd';
+import { Button, Space, InputNumber, Tooltip } from 'antd';
 import {
   LeftOutlined,
   RightOutlined,
@@ -11,14 +11,12 @@ interface EpisodeNavigationProps {
   currentEpisodeId: number;
   totalEpisodes: number;
   onEpisodeChange: (episodeId: number) => void;
-  isPreloaded: (episodeId: number) => boolean;
 }
 
-const EpisodeNavigation: React.FC<EpisodeNavigationProps> = ({
+const EpisodeNavigation: React.FC<EpisodeNavigationProps> = React.memo(({
   currentEpisodeId,
   totalEpisodes,
   onEpisodeChange,
-  isPreloaded,
 }) => {
   const canGoPrevious = currentEpisodeId > 0;
   const canGoNext = currentEpisodeId < totalEpisodes - 1;
@@ -48,11 +46,6 @@ const EpisodeNavigation: React.FC<EpisodeNavigationProps> = ({
               disabled={!canGoPrevious}
             >
               Previous
-              {canGoPrevious && isPreloaded(currentEpisodeId - 1) && (
-                <Tag color='green' style={{ marginLeft: '8px' }}>
-                  Preloaded
-                </Tag>
-              )}
             </Button>
           </Tooltip>
 
@@ -75,11 +68,6 @@ const EpisodeNavigation: React.FC<EpisodeNavigationProps> = ({
               disabled={!canGoNext}
             >
               Next
-              {canGoNext && isPreloaded(currentEpisodeId + 1) && (
-                <Tag color='green' style={{ marginLeft: '8px' }}>
-                  Preloaded
-                </Tag>
-              )}
             </Button>
           </Tooltip>
           <Button
@@ -93,6 +81,8 @@ const EpisodeNavigation: React.FC<EpisodeNavigationProps> = ({
       </Space>
     </div>
   );
-};
+});
+
+EpisodeNavigation.displayName = 'EpisodeNavigation';
 
 export default EpisodeNavigation;

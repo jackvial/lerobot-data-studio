@@ -1,11 +1,13 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 
 interface SelectedEpisodesState {
   [datasetId: string]: number[];
 }
 
+const EMPTY_SELECTION: number[] = [];
+
 export const useSelectedEpisodes = (datasetId?: string) => {
-  const [selectedEpisodes, setSelectedEpisodes] =
+  const [selectedByDataset, setSelectedByDataset] =
     useState<SelectedEpisodesState>({});
 
   // Load from localStorage on mount
@@ -13,73 +15,79 @@ export const useSelectedEpisodes = (datasetId?: string) => {
     const stored = localStorage.getItem('selectedEpisodes');
     if (stored) {
       try {
-        setSelectedEpisodes(JSON.parse(stored));
+        setSelectedByDataset(JSON.parse(stored));
       } catch (e) {
         console.error('Failed to parse stored episodes:', e);
       }
     }
   }, []);
 
-  // Save to localStorage whenever selectedEpisodes changes
+  // Save to localStorage whenever the selection changes
   useEffect(() => {
-    localStorage.setItem('selectedEpisodes', JSON.stringify(selectedEpisodes));
-  }, [selectedEpisodes]);
+    localStorage.setItem('selectedEpisodes', JSON.stringify(selectedByDataset));
+  }, [selectedByDataset]);
 
-  const toggleEpisode = (episodeId: number) => {
-    if (!datasetId) return;
+  const toggleEpisode = useCallback(
+    (episodeId: number) => {
+      if (!datasetId) return;
 
-    setSelectedEpisodes((prev) => {
-      const current = prev[datasetId] || [];
-      const isSelected = current.includes(episodeId);
+      setSelectedByDataset((prev) => {
+        const current = prev[datasetId] || [];
+        const isSelected = current.includes(episodeId);
 
-      if (isSelected) {
-        return {
-          ...prev,
-          [datasetId]: current.filter((id) => id !== episodeId),
-        };
-      } else {
+        if (isSelected) {
+          return {
+            ...prev,
+            [datasetId]: current.filter((id) => id !== episodeId),
+          };
+        }
+
         return {
           ...prev,
           [datasetId]: [...current, episodeId].sort((a, b) => a - b),
         };
-      }
-    });
-  };
+      });
+    },
+    [datasetId]
+  );
 
-  const clearSelection = () => {
+  const clearSelection = useCallback(() => {
     if (!datasetId) return;
 
-    setSelectedEpisodes((prev) => ({
+    setSelectedByDataset((prev) => ({
       ...prev,
       [datasetId]: [],
     }));
-  };
+  }, [datasetId]);
 
-  const selectAll = (episodeIds: number[]) => {
-    if (!datasetId) return;
+  const selectAll = useCallback(
+    (episodeIds: number[]) => {
+      if (!datasetId) return;
 
-    setSelectedEpisodes((prev) => ({
-      ...prev,
-      [datasetId]: [...episodeIds].sort((a, b) => a - b),
-    }));
-  };
+      setSelectedByDataset((prev) => ({
+        ...prev,
+        [datasetId]: [...episodeIds].sort((a, b) => a - b),
+      }));
+    },
+    [datasetId]
+  );
 
-  const isSelected = (episodeId: number): boolean => {
-    if (!datasetId) return false;
-    return (selectedEpisodes[datasetId] || []).includes(episodeId);
-  };
+  const selectedEpisodes = useMemo(
+    () => (datasetId && selectedByDataset[datasetId]) || EMPTY_SELECTION,
+    [datasetId, selectedByDataset]
+  );
 
-  const getSelectedForDataset = (): number[] => {
-    if (!datasetId) return [];
-    return selectedEpisodes[datasetId] || [];
-  };
+  const isSelected = useCallback(
+    (episodeId: number): boolean => selectedEpisodes.includes(episodeId),
+    [selectedEpisodes]
+  );
 
   return {
-    selectedEpisodes: getSelectedForDataset(),
+    selectedEpisodes,
     toggleEpisode,
     clearSelection,
     selectAll,
     isSelected,
-    selectedCount: getSelectedForDataset().length,
+    selectedCount: selectedEpisodes.length,
   };
 };

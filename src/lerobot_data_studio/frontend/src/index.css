@@ -109,20 +109,6 @@ h1 {
   border: 1px solid #434343 !important;
 }
 
-/* Dygraph dark theme */
-.dygraph-legend {
-  background: rgba(31, 31, 31, 0.95) !important;
-  color: rgba(255, 255, 255, 0.85) !important;
-}
-
-.dygraph-axis-label {
-  color: rgba(255, 255, 255, 0.65) !important;
-}
-
-.dygraph-xlabel, .dygraph-ylabel {
-  color: rgba(255, 255, 255, 0.85) !important;
-}
-
 .video-container {
   position: relative;
   width: 100%;

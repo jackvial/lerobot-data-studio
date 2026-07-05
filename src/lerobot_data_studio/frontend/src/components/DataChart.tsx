@@ -1,5 +1,6 @@
 import {
   forwardRef,
+  memo,
   useCallback,
   useEffect,
   useImperativeHandle,
@@ -7,7 +8,6 @@ import {
   useState,
 } from 'react';
 import { Card, Empty } from 'antd';
-import 'dygraphs/dist/dygraph.css';
 import { EpisodeDataPoint } from '@/types';
 import {
   DataChartController,
@@ -21,11 +21,12 @@ export type { DataChartHandle } from './controllers/DataChartController';
 interface DataChartProps {
   episodeData: EpisodeDataPoint[];
   featureNames: string[];
-  currentTime?: number;
 }
 
-const DataChart = forwardRef<DataChartHandle, DataChartProps>(
-  ({ episodeData, featureNames, currentTime }, ref) => {
+// The playhead is driven imperatively through the DataChartHandle ref so
+// video time updates never re-render this component.
+const DataChart = memo(forwardRef<DataChartHandle, DataChartProps>(
+  ({ episodeData, featureNames }, ref) => {
     const [viewState, setViewState] = useState<DataChartViewState>(() =>
       createInitialDataChartViewState(episodeData)
     );
@@ -34,7 +35,6 @@ const DataChart = forwardRef<DataChartHandle, DataChartProps>(
     if (controllerRef.current === null) {
       controllerRef.current = new DataChartController({
         initialEpisodeData: episodeData,
-        initialCurrentTime: currentTime,
         onViewStateChange: setViewState,
       });
     }
@@ -44,10 +44,6 @@ const DataChart = forwardRef<DataChartHandle, DataChartProps>(
     useEffect(() => {
       controller.configure({ episodeData, featureNames });
     }, [controller, episodeData, featureNames]);
-
-    useEffect(() => {
-      controller.setPlayhead(currentTime);
-    }, [controller, currentTime]);
 
     useEffect(() => () => controller.dispose(), [controller]);
 
@@ -102,7 +98,7 @@ const DataChart = forwardRef<DataChartHandle, DataChartProps>(
       </Card>
     );
   }
-);
+));
 
 DataChart.displayName = 'DataChart';
 

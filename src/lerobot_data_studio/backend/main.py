@@ -7,7 +7,7 @@ import requests
 import uvicorn
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, status as http_status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from huggingface_hub import HfApi
 from lerobot import available_datasets
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -178,8 +178,12 @@ async def get_episode(
             )
             background_tasks.add_task(load_dataset_task, repo_id, state_store)
 
-        raise HTTPException(
-            status_code=http_status.HTTP_202_ACCEPTED, detail="Dataset is being loaded. Please check status."
+        # Return (not raise) so the queued background task actually runs:
+        # Starlette drops background tasks when the endpoint raises.
+        return JSONResponse(
+            status_code=http_status.HTTP_202_ACCEPTED,
+            content={"detail": "Dataset is being loaded. Please check status."},
+            background=background_tasks,
         )
 
     dataset = state_store.get_dataset(repo_id)
@@ -248,7 +252,11 @@ async def get_video(
     if not isinstance(dataset, LeRobotDataset):
         raise HTTPException(status_code=400, detail="Video serving only available for local datasets")
 
-    video_full_path = dataset.root / video_path
+    dataset_root = dataset.root.resolve()
+    video_full_path = (dataset_root / video_path).resolve()
+    if not video_full_path.is_relative_to(dataset_root):
+        raise HTTPException(status_code=404, detail="Video not found")
+
     if not video_full_path.exists():
         raise HTTPException(status_code=404, detail="Video not found")
 

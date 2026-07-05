@@ -17,10 +17,8 @@ import {
   QuestionCircleOutlined,
   HomeOutlined,
 } from '@ant-design/icons';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@/hooks/useQuery';
 import { useSelectedEpisodes } from '@/hooks/useSelectedEpisodes';
-import { useVideoPreloader } from '@/hooks/useVideoPreloader';
-import { CreateDatasetRequest } from '@/types';
 import VideoPlayer, { VideoTimeUpdateOptions } from './VideoPlayer';
 import DataChart, { DataChartHandle } from './DataChart';
 import LoadingIndicator from './LoadingIndicator';
@@ -48,8 +46,8 @@ const DatasetViewer = () => {
     episodeId?: string;
   }>();
   const navigate = useNavigate();
-  const queryClient = useQueryClient();
   const [form] = Form.useForm<CreateDatasetFormValues>();
+  const [isCreatePending, setIsCreatePending] = useState(false);
   const [viewState, setViewState] = useState<DatasetViewerViewState>(() =>
     createInitialDatasetViewerViewState(episodeId)
   );
@@ -78,15 +76,16 @@ const DatasetViewer = () => {
     controller.syncRouteEpisodeId(episodeId);
   }, [controller, episodeId]);
 
-  const { data: status, isLoading: isStatusLoading } = useQuery({
-    queryKey: ['datasetStatus', namespace, name],
-    queryFn: () => controller.loadDatasetStatus(namespace!, name!),
+  const {
+    data: status,
+    isLoading: isStatusLoading,
+    refetch: refetchStatus,
+  } = useQuery({
+    key: ['datasetStatus', namespace, name],
+    fetcher: () => controller.loadDatasetStatus(namespace!, name!),
     enabled: controller.canLoadDataset(namespace, name),
-    refetchInterval: (query) =>
-      controller.getDatasetStatusRefetchInterval(query.state.data),
-    refetchIntervalInBackground: true,
-    refetchOnReconnect: true,
-    refetchOnWindowFocus: true,
+    refetchIntervalMs: (statusData) =>
+      controller.getDatasetStatusRefetchInterval(statusData),
   });
 
   const {
@@ -94,13 +93,12 @@ const DatasetViewer = () => {
     isLoading: isEpisodeLoading,
     error,
   } = useQuery({
-    queryKey: ['episode', namespace, name, currentEpisodeId],
-    queryFn: () => controller.loadEpisode(namespace!, name!, currentEpisodeId),
+    key: ['episode', namespace, name, currentEpisodeId],
+    fetcher: () => controller.loadEpisode(namespace!, name!, currentEpisodeId),
     enabled: controller.canLoadEpisode(namespace, name, status),
     retry: (failureCount, queryError) =>
       controller.shouldRetryEpisodeQuery(failureCount, queryError),
-    staleTime: 5 * 60 * 1000,
-    gcTime: 10 * 60 * 1000,
+    staleTimeMs: 5 * 60 * 1000,
   });
 
   useEffect(() => {
@@ -112,33 +110,13 @@ const DatasetViewer = () => {
       return;
     }
 
-    void queryClient.invalidateQueries({
-      queryKey: ['datasetStatus', namespace, name],
-    });
-  }, [controller, error, name, namespace, queryClient]);
+    refetchStatus();
+  }, [controller, error, name, namespace, refetchStatus]);
 
   const { data: episodesList } = useQuery({
-    queryKey: ['episodes', namespace, name],
-    queryFn: () => controller.listEpisodes(namespace!, name!),
+    key: ['episodes', namespace, name],
+    fetcher: () => controller.listEpisodes(namespace!, name!),
     enabled: Boolean(namespace && name && episodeData),
-  });
-
-  const createDatasetMutation = useMutation({
-    mutationFn: (payload: CreateDatasetRequest) =>
-      controller.createDataset(payload),
-    onSuccess: (data) => {
-      controller.handleCreateDatasetSuccess(data, {
-        resetForm: () => form.resetFields(),
-        clearSelection,
-        notifyInfo: message.info,
-        notifySuccess: message.success,
-      });
-    },
-    onError: (mutationError) => {
-      controller.handleCreateDatasetError(mutationError, {
-        notifyError: message.error,
-      });
-    },
   });
 
   useEffect(
@@ -151,24 +129,18 @@ const DatasetViewer = () => {
     [clearSelection, controller, form, viewState.creationTaskId]
   );
 
-  const getVideoUrl = useCallback(
-    (nextEpisodeId: number) =>
-      controller.getVideoUrl(episodeData, nextEpisodeId),
-    [controller, episodeData]
-  );
-
-  useVideoPreloader(
-    currentEpisodeId,
-    episodeData?.dataset_info.num_episodes || 0,
-    getVideoUrl
-  );
-
   const handleEpisodeChange = useCallback(
     (newEpisodeId: number) => {
       controller.setCurrentEpisodeId(newEpisodeId);
     },
     [controller]
   );
+
+  const handleSelectAll = useCallback(() => {
+    if (episodesList) {
+      selectAll(episodesList.episodes);
+    }
+  }, [episodesList, selectAll]);
 
   const handleDataChartRef = useCallback(
     (handle: DataChartHandle | null) => {
@@ -226,7 +198,22 @@ const DatasetViewer = () => {
       return;
     }
 
-    await createDatasetMutation.mutateAsync(payload);
+    setIsCreatePending(true);
+    try {
+      const data = await controller.createDataset(payload);
+      controller.handleCreateDatasetSuccess(data, {
+        resetForm: () => form.resetFields(),
+        clearSelection,
+        notifyInfo: message.info,
+        notifySuccess: message.success,
+      });
+    } catch (mutationError) {
+      controller.handleCreateDatasetError(mutationError, {
+        notifyError: message.error,
+      });
+    } finally {
+      setIsCreatePending(false);
+    }
   };
 
   if (isStatusLoading || status?.status === 'loading') {
@@ -362,7 +349,7 @@ const DatasetViewer = () => {
               selectedEpisodes={selectedEpisodes}
               currentEpisodeId={currentEpisodeId}
               onToggleEpisode={toggleEpisode}
-              onSelectAll={() => selectAll(episodesList.episodes)}
+              onSelectAll={handleSelectAll}
               onClearSelection={clearSelection}
               onEpisodeClick={handleEpisodeChange}
             />
@@ -390,7 +377,6 @@ const DatasetViewer = () => {
                 currentEpisodeId={currentEpisodeId}
                 totalEpisodes={episodeData.dataset_info.num_episodes}
                 onEpisodeChange={handleEpisodeChange}
-                isPreloaded={() => false}
               />
 
               <VideoPlayer
@@ -403,7 +389,6 @@ const DatasetViewer = () => {
                 ref={handleDataChartRef}
                 episodeData={episodeData.episode_data}
                 featureNames={episodeData.feature_names}
-                currentTime={viewState.currentVideoTime}
               />
             </Space>
           ) : null}
@@ -444,7 +429,7 @@ const DatasetViewer = () => {
               <Button
                 type='primary'
                 htmlType='submit'
-                loading={createDatasetMutation.isPending}
+                loading={isCreatePending}
               >
                 Create Dataset
               </Button>

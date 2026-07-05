@@ -314,6 +314,10 @@ export class VideoPlayerController {
             this.clearPlaybackLoop();
             this.setPlaying(false);
           });
+      } else {
+        // Secondary cameras failing to autoplay must not surface as
+        // unhandled promise rejections; the sync loop re-seeks them anyway.
+        playRequest?.catch(() => undefined);
       }
     });
   }

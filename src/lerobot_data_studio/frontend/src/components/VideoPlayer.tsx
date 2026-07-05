@@ -1,5 +1,6 @@
 import {
   forwardRef,
+  memo,
   useCallback,
   useEffect,
   useImperativeHandle,
@@ -102,7 +103,7 @@ const VideoTile = ({ video, index, controller }: VideoTileProps) => {
   );
 };
 
-const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
+const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
   ({ videos, episodeId, onTimeUpdate }, ref) => {
     const [viewState, setViewState] = useState<VideoPlayerViewState>(() =>
       createInitialVideoPlayerViewState(videos)
@@ -254,7 +255,7 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       </Card>
     );
   }
-);
+));
 
 VideoPlayer.displayName = 'VideoPlayer';
 

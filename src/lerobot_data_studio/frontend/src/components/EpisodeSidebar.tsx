@@ -22,7 +22,7 @@ interface EpisodeSidebarProps {
   onEpisodeClick: (episodeId: number) => void;
 }
 
-const EpisodeSidebar: React.FC<EpisodeSidebarProps> = ({
+const EpisodeSidebar: React.FC<EpisodeSidebarProps> = React.memo(({
   episodes,
   selectedEpisodes,
   currentEpisodeId,
@@ -157,6 +157,8 @@ const EpisodeSidebar: React.FC<EpisodeSidebarProps> = ({
       </div>
     </div>
   );
-};
+});
+
+EpisodeSidebar.displayName = 'EpisodeSidebar';
 
 export default EpisodeSidebar;

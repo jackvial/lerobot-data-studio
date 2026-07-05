@@ -7,7 +7,7 @@ import {
   CheckCircleOutlined,
   CloseCircleOutlined,
 } from '@ant-design/icons';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery } from '@/hooks/useQuery';
 import { datasetApi } from '@/services/api';
 
 const { Title, Text } = Typography;
@@ -21,8 +21,9 @@ const HomePage: React.FC = () => {
   const [validationMessage, setValidationMessage] = useState('');
 
   const { data: datasets, isLoading } = useQuery({
-    queryKey: ['datasets'],
-    queryFn: datasetApi.listDatasets,
+    key: ['datasets'],
+    fetcher: datasetApi.listDatasets,
+    staleTimeMs: 5 * 60 * 1000,
   });
 
   const handleDatasetSelect = (repoId: string) => {

@@ -1,4 +1,4 @@
-import { datasetApi } from '@/services/api';
+import { datasetApi, getApiErrorDetail, getApiErrorStatus } from '@/services/api';
 import {
   CreateDatasetRequest,
   CreateDatasetResponse,
@@ -14,7 +14,6 @@ export interface DatasetViewerViewState {
   currentEpisodeId: number;
   isCreateModalVisible: boolean;
   isShortcutsModalVisible: boolean;
-  currentVideoTime: number;
   creationTaskId: string | null;
   creationStatus: CreateTaskStatus | null;
   showStatusModal: boolean;
@@ -79,7 +78,6 @@ export const createInitialDatasetViewerViewState = (
   currentEpisodeId: parseRouteEpisodeId(episodeId),
   isCreateModalVisible: false,
   isShortcutsModalVisible: false,
-  currentVideoTime: 0,
   creationTaskId: null,
   creationStatus: null,
   showStatusModal: false,
@@ -170,7 +168,7 @@ export class DatasetViewerController {
   }
 
   shouldRetryEpisodeQuery(failureCount: number, error: unknown): boolean {
-    if (this.getResponseStatus(error) === 202) {
+    if (getApiErrorStatus(error) === 202) {
       return false;
     }
 
@@ -178,7 +176,7 @@ export class DatasetViewerController {
   }
 
   shouldInvalidateDatasetStatusForEpisodeError(error: unknown): boolean {
-    return this.getResponseStatus(error) === 202;
+    return getApiErrorStatus(error) === 202;
   }
 
   listEpisodes(
@@ -211,32 +209,13 @@ export class DatasetViewerController {
   resetPlaybackTime(): void {
     this.currentVideoTime = 0;
     this.dataChart?.setPlayhead(0);
-    this.setViewState({ currentVideoTime: 0 });
   }
 
-  handleVideoTimeUpdate(
-    time: number,
-    options?: VideoTimeUpdateOptions
-  ): void {
+  // Playback time flows straight to the chart handle; it deliberately never
+  // touches the view state so seeking cannot re-render the viewer tree.
+  handleVideoTimeUpdate(time: number, _options?: VideoTimeUpdateOptions): void {
     this.currentVideoTime = time;
     this.dataChart?.setPlayhead(time);
-
-    if (options?.force) {
-      this.setViewState({ currentVideoTime: time });
-    }
-  }
-
-  getVideoUrl(
-    episodeData: EpisodeData | undefined,
-    episodeId: number
-  ): string | undefined {
-    const videoInfo = episodeData?.videos_info?.[0];
-    if (!videoInfo) {
-      return undefined;
-    }
-
-    const baseUrl = videoInfo.url.substring(0, videoInfo.url.lastIndexOf('/'));
-    return `${baseUrl}/episode_${episodeId}`;
   }
 
   handleKeyboardEvent(
@@ -386,7 +365,7 @@ export class DatasetViewerController {
           this.setViewState({ creationTaskId: null });
         }
       } catch (error) {
-        if (this.getResponseStatus(error) === 404) {
+        if (getApiErrorStatus(error) === 404) {
           this.setViewState({
             creationTaskId: null,
             creationStatus: {
@@ -416,8 +395,7 @@ export class DatasetViewerController {
   }
 
   private formatCreateDatasetError(error: unknown): string {
-    const responseData = this.getResponseData(error);
-    const detail = responseData?.detail;
+    const detail = getApiErrorDetail(error);
 
     if (Array.isArray(detail)) {
       const validationErrors = detail
@@ -442,36 +420,6 @@ export class DatasetViewerController {
     return target.tagName === 'INPUT' || target.tagName === 'TEXTAREA';
   }
 
-  private getResponseStatus(error: unknown): number | undefined {
-    if (!this.isObject(error)) {
-      return undefined;
-    }
-
-    const response = error.response;
-    if (!this.isObject(response)) {
-      return undefined;
-    }
-
-    return typeof response.status === 'number' ? response.status : undefined;
-  }
-
-  private getResponseData(error: unknown): { detail?: unknown } | undefined {
-    if (!this.isObject(error)) {
-      return undefined;
-    }
-
-    const response = error.response;
-    if (!this.isObject(response) || !this.isObject(response.data)) {
-      return undefined;
-    }
-
-    return response.data as { detail?: unknown };
-  }
-
-  private isObject(value: unknown): value is Record<string, unknown> {
-    return typeof value === 'object' && value !== null;
-  }
-
   private setViewState(partialState: Partial<DatasetViewerViewState>): void {
     const nextState = {
       ...this.viewState,
@@ -484,7 +432,6 @@ export class DatasetViewerController {
         this.viewState.isCreateModalVisible &&
       nextState.isShortcutsModalVisible ===
         this.viewState.isShortcutsModalVisible &&
-      nextState.currentVideoTime === this.viewState.currentVideoTime &&
       nextState.creationTaskId === this.viewState.creationTaskId &&
       nextState.creationStatus === this.viewState.creationStatus &&
       nextState.showStatusModal === this.viewState.showStatusModal

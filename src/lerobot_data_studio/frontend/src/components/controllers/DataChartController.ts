@@ -1,4 +1,4 @@
-import Dygraph from 'dygraphs';
+import { LineChart } from '@/lib/lineChart';
 import { EpisodeDataPoint } from '@/types';
 
 export interface DataChartHandle {
@@ -20,7 +20,7 @@ interface DataChartSourceConfig {
   featureNames: string[];
 }
 
-type DygraphDataRow = [number, ...number[]];
+type ChartDataRow = [number, ...number[]];
 
 export const createInitialDataChartViewState = (
   episodeData: EpisodeDataPoint[]
@@ -31,8 +31,8 @@ export const createInitialDataChartViewState = (
 export class DataChartController {
   private chartElement: HTMLDivElement | null = null;
   private playheadMarkerElement: HTMLDivElement | null = null;
-  private dygraph: Dygraph | null = null;
-  private chartData: DygraphDataRow[] | null = null;
+  private chart: LineChart | null = null;
+  private chartData: ChartDataRow[] | null = null;
   private featureNames: string[] = [];
   private currentTime: number | undefined;
   private viewState: DataChartViewState;
@@ -76,89 +76,47 @@ export class DataChartController {
 
   private createChartData(
     episodeData: EpisodeDataPoint[]
-  ): DygraphDataRow[] | null {
+  ): ChartDataRow[] | null {
     if (episodeData.length === 0) {
       return null;
     }
 
-    try {
-      return episodeData.map((row) => {
-        const timestamp = row.timestamp ?? 0;
-        const observation = row.observation || [];
-        return [timestamp, ...observation];
-      });
-    } catch (error) {
-      console.error('Error converting JSON to array format:', error);
-      return null;
-    }
+    return episodeData.map((row) => {
+      const timestamp = row.timestamp ?? 0;
+      const observation = row.observation || [];
+      return [timestamp, ...observation];
+    });
   }
 
   private renderChart(): void {
+    this.destroyChart();
+
     if (!this.chartElement || !this.chartData?.length) {
-      this.destroyChart();
       return;
     }
 
-    this.destroyChart();
-
-    try {
-      this.dygraph = new Dygraph(this.chartElement, this.chartData, {
-        labels: ['Time', ...this.featureNames],
-        showRoller: true,
-        rollPeriod: 1,
-        animatedZooms: false,
-        legend: 'always',
-        labelsSeparateLines: true,
-        highlightCircleSize: 5,
-        strokeWidth: 1.5,
-        gridLineColor: '#ddd',
-        axisLineColor: '#999',
-        axisLabelFontSize: 12,
-        xLabelHeight: 18,
-        yLabelWidth: 50,
-        drawPoints: false,
-        pointSize: 3,
-        hideOverlayOnMouseOut: false,
-        showRangeSelector: true,
-        rangeSelectorHeight: 40,
-        rangeSelectorPlotStrokeColor: '#666',
-        rangeSelectorPlotFillColor: '#666',
-        interactionModel: Dygraph.defaultInteractionModel,
-        xValueParser: (x: string) => parseFloat(x),
-        drawCallback: () => {
-          window.requestAnimationFrame(() => this.updatePlayheadMarker());
-        },
-        axes: {
-          x: {
-            axisLabelFormatter: (x: number | Date) => {
-              if (typeof x === 'number') {
-                return `${x.toFixed(2)}s`;
-              }
-              return x.toString();
-            },
-            valueFormatter: (x: number) => `${x.toFixed(3)} seconds`,
-          },
-        },
-        xlabel: 'Time (seconds)',
-      });
-      window.requestAnimationFrame(() => this.updatePlayheadMarker());
-    } catch (error) {
-      console.error('Error creating Dygraph:', error);
-    }
+    this.chart = new LineChart(this.chartElement, this.chartData, {
+      labels: this.featureNames,
+      xLabel: 'Time (seconds)',
+      onDraw: () => {
+        window.requestAnimationFrame(() => this.updatePlayheadMarker());
+      },
+    });
+    window.requestAnimationFrame(() => this.updatePlayheadMarker());
   }
 
   private updatePlayheadMarker(): void {
     const marker = this.playheadMarkerElement;
 
-    if (!this.dygraph || !marker || this.currentTime === undefined) {
+    if (!this.chart || !marker || this.currentTime === undefined) {
       if (marker) {
         marker.style.display = 'none';
       }
       return;
     }
 
-    const area = this.dygraph.getArea();
-    const markerX = this.dygraph.toDomXCoord(this.currentTime);
+    const area = this.chart.getArea();
+    const markerX = this.chart.toDomXCoord(this.currentTime);
 
     if (markerX < area.x || markerX > area.x + area.w) {
       marker.style.display = 'none';
@@ -172,12 +130,12 @@ export class DataChartController {
   }
 
   private destroyChart(): void {
-    if (!this.dygraph) {
+    if (!this.chart) {
       return;
     }
 
-    this.dygraph.destroy();
-    this.dygraph = null;
+    this.chart.destroy();
+    this.chart = null;
   }
 
   private setViewState(partialState: Partial<DataChartViewState>): void {
