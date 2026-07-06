@@ -165,3 +165,5 @@ node_modules/
 .claude/
 CLAUDE.md
 .ruff_cache/
+# E2E artifacts
+e2e/artifacts/

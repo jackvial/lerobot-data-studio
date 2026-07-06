@@ -1,0 +1,13 @@
+{
+  "name": "lerobot-data-studio-e2e",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "End-to-end browser tests for LeRobot Data Studio",
+  "scripts": {
+    "test": "node run.mjs"
+  },
+  "dependencies": {
+    "puppeteer-core": "^24.0.0"
+  }
+}

@@ -15,7 +15,8 @@ export default defineConfig({
     host: true,  // Allow connections from outside localhost
     proxy: {
       '/api': {
-        target: 'http://localhost:8000',
+        // Overridable so the e2e suite can point at its own backend instance
+        target: process.env.VITE_API_TARGET || 'http://localhost:8000',
         changeOrigin: true,
       },
     },

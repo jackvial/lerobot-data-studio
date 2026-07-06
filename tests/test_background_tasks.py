@@ -71,6 +71,37 @@ def test_create_dataset_task_filters_and_pushes(monkeypatch):
     assert status.new_repo_id == "ns/new"
 
 
+def test_create_dataset_task_all_episodes_restores_cached_repo_id():
+    store = StateStore()
+    dataset = MagicMock()
+    dataset.repo_id = "ns/orig"
+    dataset.meta.total_episodes = 2
+    pushed_as = []
+    dataset.push_to_hub.side_effect = lambda **kwargs: pushed_as.append(dataset.repo_id)
+    store.cache_dataset("ns/orig", dataset)
+
+    create_dataset_task("task-1", "ns/orig", "ns/new", [0, 1], None, store)
+
+    assert pushed_as == ["ns/new"]
+    # The cached instance must not be left pointing at the new repo id.
+    assert dataset.repo_id == "ns/orig"
+    assert store.get_creation_task("task-1").status == "completed"
+
+
+def test_create_dataset_task_restores_repo_id_when_push_fails():
+    store = StateStore()
+    dataset = MagicMock()
+    dataset.repo_id = "ns/orig"
+    dataset.meta.total_episodes = 1
+    dataset.push_to_hub.side_effect = RuntimeError("hub down")
+    store.cache_dataset("ns/orig", dataset)
+
+    create_dataset_task("task-1", "ns/orig", "ns/new", [0], None, store)
+
+    assert dataset.repo_id == "ns/orig"
+    assert store.get_creation_task("task-1").status == "failed"
+
+
 def test_create_dataset_task_fails_when_source_not_cached():
     store = StateStore()
 

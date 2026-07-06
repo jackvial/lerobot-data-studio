@@ -195,12 +195,13 @@ async def get_episode(
 
     episode_data_items, feature_names = get_episode_data(dataset, episode_id)
 
+    raw_version = getattr(dataset.meta, "version", getattr(dataset.meta, "_version", None))
     dataset_info = DatasetInfo(
         repo_id=repo_id,
         num_samples=dataset.num_frames,
         num_episodes=dataset.num_episodes,
         fps=dataset.fps,
-        version=str(getattr(dataset.meta, "version", getattr(dataset.meta, "_version", None))),
+        version=str(raw_version) if raw_version is not None else None,
     )
 
     episode_meta = dataset.meta.episodes[episode_id]
@@ -229,7 +230,7 @@ async def get_episode(
         episode_data=episode_data_items,
         feature_names=feature_names,
         # Used to visually sanity check indices are aligned
-        actual_episode_index=episode_data_items[0].episode_index,
+        actual_episode_index=episode_data_items[0].episode_index if episode_data_items else None,
         tasks=tasks,
     )
 

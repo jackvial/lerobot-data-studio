@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
+  App as AntApp,
   Layout,
   Spin,
   Alert,
@@ -10,7 +11,6 @@ import {
   Modal,
   Form,
   Input,
-  message,
 } from 'antd';
 import {
   PlusOutlined,
@@ -46,6 +46,7 @@ const DatasetViewer = () => {
     episodeId?: string;
   }>();
   const navigate = useNavigate();
+  const { message } = AntApp.useApp();
   const [form] = Form.useForm<CreateDatasetFormValues>();
   const [isCreatePending, setIsCreatePending] = useState(false);
   const [viewState, setViewState] = useState<DatasetViewerViewState>(() =>

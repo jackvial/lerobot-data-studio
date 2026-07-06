@@ -193,6 +193,28 @@ class TestGetEpisode:
         assert client.get("/api/datasets/ns/name/episodes/5").status_code == 404
         assert client.get("/api/datasets/ns/name/episodes/-1").status_code == 404
 
+    def test_version_is_null_when_meta_has_none(self, client, store):
+        dataset = _make_fake_dataset()
+        dataset.meta.version = None
+        store.cache_dataset("ns/name", dataset)
+
+        body = client.get("/api/datasets/ns/name/episodes/0").json()
+
+        assert body["dataset_info"]["version"] is None
+
+    def test_empty_episode_returns_null_actual_index(self, client, store):
+        dataset = _make_fake_dataset()
+        dataset.meta.episodes[0]["dataset_from_index"] = 0
+        dataset.meta.episodes[0]["dataset_to_index"] = 0
+        store.cache_dataset("ns/name", dataset)
+
+        response = client.get("/api/datasets/ns/name/episodes/0")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["actual_episode_index"] is None
+        assert body["episode_data"] == []
+
 
 class TestListEpisodes:
     def test_requires_loaded_dataset(self, client):

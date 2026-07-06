@@ -125,15 +125,17 @@ def create_dataset_task(
         all_episodes = list(range(dataset.meta.total_episodes))
         episodes_to_delete = [ep for ep in all_episodes if ep not in selected_episodes]
 
+        # When every episode is selected there is nothing to filter, so the
+        # original dataset is pushed under the new repo id. Its repo_id must be
+        # restored afterwards or the cached instance is left poisoned.
+        restore_repo_id = None
         if episodes_to_delete:
             filtered_dataset = delete_episodes(
                 dataset, episode_indices=episodes_to_delete, repo_id=new_repo_id
             )
         else:
-            # If no episodes to delete, we're keeping all episodes
-            # In this case, we need to copy the dataset with a new repo_id
-            # For now, we'll just use the original dataset
             filtered_dataset = dataset
+            restore_repo_id = dataset.repo_id
             filtered_dataset.repo_id = new_repo_id
 
         state_store.set_creation_task(
@@ -152,11 +154,14 @@ def create_dataset_task(
         if episode_index_task_map:
             logger.warning("Custom task assignment is not yet implemented with the new API")
 
-        # Push to hub
-        filtered_dataset.push_to_hub(
-            license="apache-2.0",
-            tags=["LeRobot", "robotics"],
-        )
+        try:
+            filtered_dataset.push_to_hub(
+                license="apache-2.0",
+                tags=["LeRobot", "robotics"],
+            )
+        finally:
+            if restore_repo_id is not None:
+                filtered_dataset.repo_id = restore_repo_id
 
         state_store.set_creation_task(
             task_id,
