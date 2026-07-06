@@ -15,6 +15,7 @@ downloads/
 eggs/
 .eggs/
 lib/
+!src/lerobot_data_studio/frontend/src/lib/
 lib64/
 parts/
 sdist/
